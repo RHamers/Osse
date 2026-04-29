@@ -1,0 +1,67 @@
+# ============================================================
+# Android / Gradle
+# ============================================================
+*.iml
+.gradle/
+local.properties
+.idea/
+.DS_Store
+build/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+bin/
+gen/
+out/
+release/
+proguard/
+
+# Android Studio navigation editor temp files
+.navigation/
+
+# Keystore files (never commit signing keys)
+*.jks
+*.keystore
+
+# Generated AAR / JAR (built artifacts, not source)
+# app/libs/ is excluded — pre-built AARs (e.g. ytaudio.aar) are committed there
+*.jar
+!app/libs/*.aar
+
+# Room generated schema exports (optional — remove if you want to track schema)
+# app/schemas/
+
+# ============================================================
+# Go
+# ============================================================
+# Compiled binaries and test output
+ytaudio/*.aar
+ytaudio/*.jar
+ytaudio/pkg/
+ytaudio/bin/
+
+# Go build cache artefacts
+*.test
+*.out
+
+# Vendor directory (if not vendoring)
+vendor/
+
+# gomobile intermediate output
+gomobile-build-*/
+
+# ============================================================
+# General
+# ============================================================
+*.log
+*.tmp
+*.swp
+*.swo
+*~
+.env
+.env.local
