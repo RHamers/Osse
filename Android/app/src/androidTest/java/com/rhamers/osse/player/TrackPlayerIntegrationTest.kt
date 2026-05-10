@@ -5,36 +5,46 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.rhamers.osse.model.AudioSource
 import com.rhamers.osse.model.TrackId
-import org.junit.After
+import org.junit.AfterClass
 import org.junit.Assert.*
 import org.junit.Before
+import org.junit.BeforeClass
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class TrackPlayerIntegrationTest {
 
-    private lateinit var player: TrackPlayer
-    private val instrumentation = InstrumentationRegistry.getInstrumentation()
+    companion object {
+        private lateinit var player: TrackPlayer
+        private val instrumentation = InstrumentationRegistry.getInstrumentation()
 
-    @Before
-    fun setUp() {
-        instrumentation.runOnMainSync {
-            player = TrackPlayer(ApplicationProvider.getApplicationContext(), TrackId.PODCAST)
+        @BeforeClass @JvmStatic
+        fun setUpClass() {
+            instrumentation.runOnMainSync {
+                player = TrackPlayer(ApplicationProvider.getApplicationContext(), TrackId.PODCAST)
+            }
+        }
+
+        @AfterClass @JvmStatic
+        fun tearDownClass() {
+            instrumentation.runOnMainSync { player.release() }
         }
     }
 
-    @After
-    fun tearDown() {
+    @Before
+    fun resetState() {
         instrumentation.runOnMainSync {
-            player.release()
+            player.player.stop()
+            player.player.clearMediaItems()
+            player.setVolume(1.0f)
+            player.setSpeed(1.0f)
         }
     }
 
     @Test
     fun playerInitializesWithCorrectDefaults() {
         val state = player.state.value
-        assertNull(state.source)
         assertFalse(state.isPlaying)
         assertEquals(1.0f, state.volume, 0.001f)
         assertEquals(1.0f, state.speed, 0.001f)

@@ -11,6 +11,13 @@ sealed class AudioSource {
     data class YoutubeDownloaded(val localPath: String) : AudioSource()
 }
 
+fun AudioSource.toDisplayString(): String = when (this) {
+    is AudioSource.LocalFile         -> uri.lastPathSegment ?: uri.toString()
+    is AudioSource.RssFeed           -> enclosureUrl
+    is AudioSource.YoutubeStream     -> "YouTube: $youtubeUrl"
+    is AudioSource.YoutubeDownloaded -> localPath.substringAfterLast('/')
+}
+
 fun AudioSource.toMediaItem(): MediaItem {
     val uri = when (this) {
         is AudioSource.LocalFile         -> uri.toString()
