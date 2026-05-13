@@ -5,6 +5,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -25,7 +26,6 @@ import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -50,7 +50,10 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 @Composable
-fun TrackScreen(binder: MultiTrackService.LocalBinder?) {
+fun TrackScreen(
+    binder: MultiTrackService.LocalBinder?,
+    contentPadding: PaddingValues = PaddingValues()
+) {
     if (binder == null) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator(modifier = Modifier.semantics { contentDescription = "Loading" })
@@ -65,70 +68,68 @@ fun TrackScreen(binder: MultiTrackService.LocalBinder?) {
 
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
-    Scaffold(modifier = Modifier.fillMaxSize()) { padding ->
-        if (isLandscape) {
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                TrackCard(
-                    modifier = Modifier.weight(1f).fillMaxHeight(),
-                    scrollable = true,
-                    label = "Podcast",
-                    state = podcastState,
-                    onPlay = podcastTrack::play,
-                    onPause = podcastTrack::pause,
-                    onVolumeChange = podcastTrack::setVolume,
-                    onSpeedChange = podcastTrack::setSpeed,
-                    onSeek = podcastTrack::seekTo
-                )
-                TrackCard(
-                    modifier = Modifier.weight(1f).fillMaxHeight(),
-                    scrollable = true,
-                    label = "Music",
-                    state = musicState,
-                    onPlay = musicTrack::play,
-                    onPause = musicTrack::pause,
-                    onVolumeChange = musicTrack::setVolume,
-                    onSpeedChange = musicTrack::setSpeed,
-                    onSeek = musicTrack::seekTo
-                )
-            }
-        } else {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                TrackCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    scrollable = false,
-                    label = "Podcast",
-                    state = podcastState,
-                    onPlay = podcastTrack::play,
-                    onPause = podcastTrack::pause,
-                    onVolumeChange = podcastTrack::setVolume,
-                    onSpeedChange = podcastTrack::setSpeed,
-                    onSeek = podcastTrack::seekTo
-                )
-                TrackCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    scrollable = false,
-                    label = "Music",
-                    state = musicState,
-                    onPlay = musicTrack::play,
-                    onPause = musicTrack::pause,
-                    onVolumeChange = musicTrack::setVolume,
-                    onSpeedChange = musicTrack::setSpeed,
-                    onSeek = musicTrack::seekTo
-                )
-            }
+    if (isLandscape) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(contentPadding)
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            TrackCard(
+                modifier = Modifier.weight(1f).fillMaxHeight(),
+                scrollable = true,
+                label = "Podcast",
+                state = podcastState,
+                onPlay = podcastTrack::play,
+                onPause = podcastTrack::pause,
+                onVolumeChange = podcastTrack::setVolume,
+                onSpeedChange = podcastTrack::setSpeed,
+                onSeek = podcastTrack::seekTo
+            )
+            TrackCard(
+                modifier = Modifier.weight(1f).fillMaxHeight(),
+                scrollable = true,
+                label = "Music",
+                state = musicState,
+                onPlay = musicTrack::play,
+                onPause = musicTrack::pause,
+                onVolumeChange = musicTrack::setVolume,
+                onSpeedChange = musicTrack::setSpeed,
+                onSeek = musicTrack::seekTo
+            )
+        }
+    } else {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(contentPadding)
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            TrackCard(
+                modifier = Modifier.fillMaxWidth(),
+                scrollable = false,
+                label = "Podcast",
+                state = podcastState,
+                onPlay = podcastTrack::play,
+                onPause = podcastTrack::pause,
+                onVolumeChange = podcastTrack::setVolume,
+                onSpeedChange = podcastTrack::setSpeed,
+                onSeek = podcastTrack::seekTo
+            )
+            TrackCard(
+                modifier = Modifier.fillMaxWidth(),
+                scrollable = false,
+                label = "Music",
+                state = musicState,
+                onPlay = musicTrack::play,
+                onPause = musicTrack::pause,
+                onVolumeChange = musicTrack::setVolume,
+                onSpeedChange = musicTrack::setSpeed,
+                onSeek = musicTrack::seekTo
+            )
         }
     }
 }

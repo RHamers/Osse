@@ -1,8 +1,14 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
 }
+
+val localProps = Properties()
+rootProject.file("local.properties").takeIf { it.exists() }
+    ?.inputStream()?.use { localProps.load(it) }
 
 android {
     namespace = "com.rhamers.osse"
@@ -25,6 +31,9 @@ android {
         ndk {
             abiFilters += "arm64-v8a"
         }
+
+        buildConfigField("String", "PODCAST_INDEX_API_KEY",    "\"${localProps["podcastindex.apiKey"]    ?: ""}\"")
+        buildConfigField("String", "PODCAST_INDEX_API_SECRET", "\"${localProps["podcastindex.apiSecret"] ?: ""}\"")
     }
 
     buildTypes {
@@ -50,6 +59,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
