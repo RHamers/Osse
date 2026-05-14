@@ -9,5 +9,7 @@ data class PodcastEntity(
     val title: String,
     val artworkUrl: String?,
     val description: String?,
-    val addedAt: Long = System.currentTimeMillis()
+    val addedAt: Long = System.currentTimeMillis(),
+    val autoQueue: Boolean = true,
+    val subscribedAt: Long = 0L
 )

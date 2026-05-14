@@ -13,6 +13,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AddToQueue
+import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.CircularProgressIndicator
@@ -45,11 +48,14 @@ fun EpisodeListScreen(
     podcastTitle: String,
     viewModel: PodcastViewModel,
     onPlayEpisode: (Episode) -> Unit,
+    onAddToQueue: (Episode) -> Unit,
     onBack: () -> Unit,
     contentPadding: PaddingValues = PaddingValues()
 ) {
     val episodes by remember(feedUrl) { viewModel.episodesFor(feedUrl) }.collectAsState(emptyList())
     val isRefreshing by viewModel.isRefreshing.collectAsState()
+    val subscriptions by viewModel.subscriptions.collectAsState()
+    val autoQueue = subscriptions.find { it.feedUrl == feedUrl }?.autoQueue ?: true
 
     Column(modifier = Modifier.fillMaxSize().padding(contentPadding)) {
         TopAppBar(
@@ -60,6 +66,14 @@ fun EpisodeListScreen(
                 }
             },
             actions = {
+                IconButton(onClick = { viewModel.toggleAutoQueue(feedUrl, !autoQueue) }) {
+                    Icon(
+                        if (autoQueue) Icons.Default.NotificationsActive else Icons.Default.NotificationsOff,
+                        contentDescription = if (autoQueue) "Auto-queue on" else "Auto-queue off",
+                        tint = if (autoQueue) MaterialTheme.colorScheme.primary
+                               else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 if (isRefreshing) {
                     CircularProgressIndicator(modifier = Modifier.size(24.dp).padding(end = 8.dp), strokeWidth = 2.dp)
                 } else {
@@ -78,7 +92,7 @@ fun EpisodeListScreen(
         } else {
             LazyColumn {
                 items(episodes, key = { it.guid }) { episode ->
-                    EpisodeItem(episode, onPlayEpisode)
+                    EpisodeItem(episode, onPlayEpisode, onAddToQueue)
                     HorizontalDivider()
                 }
             }
@@ -87,7 +101,11 @@ fun EpisodeListScreen(
 }
 
 @Composable
-private fun EpisodeItem(episode: Episode, onPlay: (Episode) -> Unit) {
+private fun EpisodeItem(
+    episode: Episode,
+    onPlay: (Episode) -> Unit,
+    onQueue: (Episode) -> Unit
+) {
     ListItem(
         headlineContent = {
             Text(episode.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -111,8 +129,13 @@ private fun EpisodeItem(episode: Episode, onPlay: (Episode) -> Unit) {
             }
         },
         trailingContent = {
-            FilledIconButton(onClick = { onPlay(episode) }, modifier = Modifier.size(40.dp)) {
-                Icon(Icons.Default.PlayArrow, contentDescription = "Play", modifier = Modifier.size(20.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                IconButton(onClick = { onQueue(episode) }) {
+                    Icon(Icons.Default.AddToQueue, contentDescription = "Add to queue", modifier = Modifier.size(20.dp))
+                }
+                FilledIconButton(onClick = { onPlay(episode) }, modifier = Modifier.size(40.dp)) {
+                    Icon(Icons.Default.PlayArrow, contentDescription = "Play", modifier = Modifier.size(20.dp))
+                }
             }
         },
         modifier = Modifier.fillMaxWidth()

@@ -10,6 +10,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Podcasts
 import androidx.compose.material3.Icon
@@ -32,6 +33,7 @@ import com.rhamers.osse.ui.podcast.PodcastSearchScreen
 import com.rhamers.osse.ui.podcast.PodcastViewModel
 import com.rhamers.osse.ui.theme.OsseTheme
 import com.rhamers.osse.ui.tracks.TrackScreen
+import com.rhamers.osse.ui.upnext.UpNextScreen
 
 class MainActivity : ComponentActivity() {
 
@@ -53,7 +55,9 @@ class MainActivity : ComponentActivity() {
         val db = OsseDatabase.get(this)
         podcastViewModel = ViewModelProvider(
             this,
-            PodcastViewModel.Factory(DefaultPodcastRepository(db.podcastDao(), db.episodeDao()))
+            PodcastViewModel.Factory(
+                DefaultPodcastRepository(db.podcastDao(), db.episodeDao(), db.queueItemDao())
+            )
         )[PodcastViewModel::class.java]
 
         setContent {
@@ -72,6 +76,12 @@ class MainActivity : ComponentActivity() {
                                 onClick = { currentScreen = Screen.PodcastSearch },
                                 icon = { Icon(Icons.Default.Podcasts, contentDescription = null) },
                                 label = { Text("Podcasts") }
+                            )
+                            NavigationBarItem(
+                                selected = currentScreen is Screen.UpNext,
+                                onClick = { currentScreen = Screen.UpNext },
+                                icon = { Icon(Icons.Default.FormatListNumbered, contentDescription = null) },
+                                label = { Text("Up Next") }
                             )
                         }
                     }
@@ -92,7 +102,15 @@ class MainActivity : ComponentActivity() {
                             podcastTitle = screen.podcastTitle,
                             viewModel = podcastViewModel,
                             onPlayEpisode = ::playEpisode,
+                            onAddToQueue = { episode -> podcastViewModel.addToQueue(episode.guid) },
                             onBack = { currentScreen = Screen.PodcastSearch },
+                            contentPadding = contentPadding
+                        )
+
+                        Screen.UpNext -> UpNextScreen(
+                            viewModel = podcastViewModel,
+                            onPlayEpisode = ::playEnclosureUrl,
+                            onMarkComplete = { item -> binder?.markComplete(item.id, item.enclosureUrl) },
                             contentPadding = contentPadding
                         )
                     }
@@ -118,6 +136,14 @@ class MainActivity : ComponentActivity() {
         val b = binder ?: return
         val track = b.getTrack(TrackId.PODCAST) ?: b.addTrack(TrackId.PODCAST)
         track.setSource(AudioSource.RssFeed(episode.enclosureUrl))
+        track.play()
+        currentScreen = Screen.Tracks
+    }
+
+    private fun playEnclosureUrl(enclosureUrl: String) {
+        val b = binder ?: return
+        val track = b.getTrack(TrackId.PODCAST) ?: b.addTrack(TrackId.PODCAST)
+        track.setSource(AudioSource.RssFeed(enclosureUrl))
         track.play()
         currentScreen = Screen.Tracks
     }

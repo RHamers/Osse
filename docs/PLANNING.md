@@ -34,7 +34,7 @@ Custom `XmlPullParser`-based RSS parser. Handles `<itunes:*>` namespace, CDATA s
 
 ---
 
-### 📋 Up Next queue
+### ✅ Up Next queue
 
 **Goal:** A dedicated play queue. New episodes from subscribed podcasts are added automatically; any episode can also be queued manually. The PODCAST track auto-advances when an episode ends.
 

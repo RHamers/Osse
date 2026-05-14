@@ -7,6 +7,7 @@ import com.rhamers.osse.data.api.PodcastIndexFeed
 import com.rhamers.osse.data.repository.PodcastRepository
 import com.rhamers.osse.model.Episode
 import com.rhamers.osse.model.Podcast
+import com.rhamers.osse.model.QueueItem
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -25,6 +26,9 @@ sealed class SearchState {
 class PodcastViewModel(private val repo: PodcastRepository) : ViewModel() {
 
     val subscriptions: StateFlow<List<Podcast>> = repo.observePodcasts()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val queue: StateFlow<List<QueueItem>> = repo.observeQueue()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _searchState = MutableStateFlow<SearchState>(SearchState.Idle)
@@ -70,6 +74,28 @@ class PodcastViewModel(private val repo: PodcastRepository) : ViewModel() {
             _isRefreshing.value = true
             try { repo.refreshEpisodes(feedUrl) } catch (_: Exception) {}
             _isRefreshing.value = false
+        }
+    }
+
+    fun addToQueue(episodeGuid: String) {
+        viewModelScope.launch {
+            try { repo.addToQueue(episodeGuid) } catch (_: Exception) {}
+        }
+    }
+
+    fun removeFromQueue(id: Long) {
+        viewModelScope.launch { repo.removeFromQueue(id) }
+    }
+
+    fun reorderQueue(items: List<QueueItem>) {
+        viewModelScope.launch {
+            try { repo.reorderQueue(items) } catch (_: Exception) {}
+        }
+    }
+
+    fun toggleAutoQueue(feedUrl: String, autoQueue: Boolean) {
+        viewModelScope.launch {
+            try { repo.toggleAutoQueue(feedUrl, autoQueue) } catch (_: Exception) {}
         }
     }
 

@@ -10,6 +10,7 @@ import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.rhamers.osse.data.repository.FakePodcastRepository
 import com.rhamers.osse.model.Episode
+import com.rhamers.osse.model.Podcast
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Before
@@ -51,6 +52,7 @@ class EpisodeListScreenTest {
 
     private fun setContent(
         onPlay: (Episode) -> Unit = {},
+        onAddToQueue: (Episode) -> Unit = {},
         onBack: () -> Unit = {}
     ) {
         composeTestRule.setContent {
@@ -59,6 +61,7 @@ class EpisodeListScreenTest {
                 podcastTitle = "Test Podcast",
                 viewModel = viewModel,
                 onPlayEpisode = onPlay,
+                onAddToQueue = onAddToQueue,
                 onBack = onBack
             )
         }
@@ -130,6 +133,63 @@ class EpisodeListScreenTest {
         composeTestRule.onNodeWithContentDescription("Refresh").performClick()
         composeTestRule.runOnIdle {
             assertEquals(feedUrl, repo.lastRefreshed)
+        }
+    }
+
+    // ── add to queue ─────────────────────────────────────────────────────────
+
+    @Test fun addToQueueButtonIsDisplayedForEachEpisode() {
+        repo.setEpisodes(feedUrl, listOf(episode()))
+        setContent()
+
+        composeTestRule.waitUntil(2_000) {
+            composeTestRule.onAllNodes(hasContentDescription("Add to queue")).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithContentDescription("Add to queue").assertIsDisplayed()
+    }
+
+    @Test fun clickingAddToQueueButtonInvokesCallback() {
+        val ep = episode(guid = "ep1", title = "Queue Me")
+        repo.setEpisodes(feedUrl, listOf(ep))
+
+        var queued: Episode? = null
+        setContent(onAddToQueue = { queued = it })
+
+        composeTestRule.waitUntil(2_000) {
+            composeTestRule.onAllNodes(hasContentDescription("Add to queue")).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithContentDescription("Add to queue").performClick()
+
+        composeTestRule.runOnIdle {
+            assertNotNull(queued)
+            assertEquals("ep1", queued!!.guid)
+        }
+    }
+
+    // ── auto-queue toggle ────────────────────────────────────────────────────
+
+    @Test fun autoQueueToggleShownAsOnByDefault() {
+        setContent()
+        composeTestRule.onNodeWithContentDescription("Auto-queue on").assertIsDisplayed()
+    }
+
+    @Test fun autoQueueToggleReflectsOffStateFromSubscription() {
+        repo.podcasts.value = listOf(
+            Podcast(feedUrl, "Test Podcast", null, null, autoQueue = false)
+        )
+        setContent()
+
+        composeTestRule.waitUntil(2_000) {
+            composeTestRule.onAllNodes(hasContentDescription("Auto-queue off")).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithContentDescription("Auto-queue off").assertIsDisplayed()
+    }
+
+    @Test fun clickingAutoQueueToggleCallsViewModelWithInvertedValue() {
+        setContent()
+        composeTestRule.onNodeWithContentDescription("Auto-queue on").performClick()
+        composeTestRule.runOnIdle {
+            assertEquals(feedUrl to false, repo.lastAutoQueueToggle)
         }
     }
 }

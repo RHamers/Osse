@@ -116,6 +116,9 @@ dependencies {
     // Coroutines
     implementation(libs.kotlinx.coroutines.android)
 
+    // Drag-to-reorder
+    implementation(libs.reorderable)
+
     // ytaudio gomobile AAR — uncomment once built and placed in app/libs/ (see ADR-002)
     // implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar", "*.jar"))))
 

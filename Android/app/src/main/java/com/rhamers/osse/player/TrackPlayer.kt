@@ -23,6 +23,8 @@ class TrackPlayer(context: Context, val trackId: TrackId) {
 
     internal val player: ExoPlayer = ExoPlayer.Builder(context).build()
 
+    var onEnded: (() -> Unit)? = null
+
     private val _state = MutableStateFlow(TrackState())
     val state: StateFlow<TrackState> = _state.asStateFlow()
 
@@ -39,6 +41,7 @@ class TrackPlayer(context: Context, val trackId: TrackId) {
                     isLoading = playbackState == Player.STATE_BUFFERING,
                     durationMs = player.duration.coerceAtLeast(0L)
                 )
+                if (playbackState == Player.STATE_ENDED) onEnded?.invoke()
             }
 
             override fun onPositionDiscontinuity(

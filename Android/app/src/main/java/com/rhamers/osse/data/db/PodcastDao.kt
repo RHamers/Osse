@@ -20,4 +20,7 @@ interface PodcastDao {
 
     @Delete
     suspend fun delete(podcast: PodcastEntity)
+
+    @Query("UPDATE podcasts SET autoQueue = :autoQueue WHERE feedUrl = :feedUrl")
+    suspend fun setAutoQueue(feedUrl: String, autoQueue: Boolean)
 }
