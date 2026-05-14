@@ -13,6 +13,7 @@ import com.rhamers.osse.model.Episode
 import com.rhamers.osse.model.Podcast
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -107,7 +108,7 @@ class EpisodeListScreenTest {
         setContent(onBack = { backCalled = true })
 
         composeTestRule.onNodeWithContentDescription("Back").performClick()
-        composeTestRule.runOnIdle { assert(backCalled) }
+        assertTrue(backCalled)
     }
 
     @Test fun playButtonInvokesOnPlayEpisode() {
@@ -122,18 +123,15 @@ class EpisodeListScreenTest {
         }
         composeTestRule.onNode(hasContentDescription("Play")).performClick()
 
-        composeTestRule.runOnIdle {
-            assertNotNull(played)
-            assertEquals("ep1", played!!.guid)
-        }
+        assertNotNull(played)
+        assertEquals("ep1", played!!.guid)
     }
 
     @Test fun refreshButtonCallsViewModelRefresh() {
         setContent()
         composeTestRule.onNodeWithContentDescription("Refresh").performClick()
-        composeTestRule.runOnIdle {
-            assertEquals(feedUrl, repo.lastRefreshed)
-        }
+        composeTestRule.waitUntil(2_000) { repo.lastRefreshed != null }
+        assertEquals(feedUrl, repo.lastRefreshed)
     }
 
     // ── add to queue ─────────────────────────────────────────────────────────
@@ -160,10 +158,8 @@ class EpisodeListScreenTest {
         }
         composeTestRule.onNodeWithContentDescription("Add to queue").performClick()
 
-        composeTestRule.runOnIdle {
-            assertNotNull(queued)
-            assertEquals("ep1", queued!!.guid)
-        }
+        assertNotNull(queued)
+        assertEquals("ep1", queued!!.guid)
     }
 
     // ── auto-queue toggle ────────────────────────────────────────────────────
@@ -188,8 +184,7 @@ class EpisodeListScreenTest {
     @Test fun clickingAutoQueueToggleCallsViewModelWithInvertedValue() {
         setContent()
         composeTestRule.onNodeWithContentDescription("Auto-queue on").performClick()
-        composeTestRule.runOnIdle {
-            assertEquals(feedUrl to false, repo.lastAutoQueueToggle)
-        }
+        composeTestRule.waitUntil(2_000) { repo.lastAutoQueueToggle != null }
+        assertEquals(feedUrl to false, repo.lastAutoQueueToggle)
     }
 }

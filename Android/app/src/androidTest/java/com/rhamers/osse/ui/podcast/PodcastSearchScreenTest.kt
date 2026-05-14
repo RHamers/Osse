@@ -101,10 +101,9 @@ class PodcastSearchScreenTest {
         }
         composeTestRule.onNodeWithContentDescription("Subscribe").performClick()
 
-        composeTestRule.runOnIdle {
-            assertNotNull(repo.lastSubscribed)
-            assertEquals("The Daily", repo.lastSubscribed!!.title)
-        }
+        composeTestRule.waitUntil(2_000) { repo.lastSubscribed != null }
+        assertNotNull(repo.lastSubscribed)
+        assertEquals("The Daily", repo.lastSubscribed!!.title)
     }
 
     @Test fun showsErrorMessageOnSearchFailure() {

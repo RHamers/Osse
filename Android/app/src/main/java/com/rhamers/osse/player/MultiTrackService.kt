@@ -46,7 +46,8 @@ class MultiTrackService : MediaSessionService() {
 
         fun markCurrentEpisodeComplete() {
             serviceScope.launch {
-                val enclosureUrl = (tracks[TrackId.PODCAST]?.state?.value?.source as? AudioSource.RssFeed)?.enclosureUrl
+                val track = tracks[TrackId.PODCAST] ?: return@launch
+                val enclosureUrl = (track.state.value.source as? AudioSource.RssFeed)?.enclosureUrl
                     ?: return@launch
                 withContext(Dispatchers.IO) {
                     val db = OsseDatabase.get(this@MultiTrackService)
@@ -55,6 +56,7 @@ class MultiTrackService : MediaSessionService() {
                         db.queueItemDao().deleteByGuid(episode.guid)
                     }
                 }
+                track.pause()
                 autoAdvance()
             }
         }

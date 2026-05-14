@@ -26,6 +26,7 @@ class TrackCardTest {
     val composeRule = createComposeRule()
 
     private fun setCard(state: TrackState, onPlay: () -> Unit = {}, onPause: () -> Unit = {},
+                        onRewind: () -> Unit = {}, onForward: () -> Unit = {},
                         onVolumeChange: (Float) -> Unit = {}, onSpeedChange: (Float) -> Unit = {},
                         onSeek: (Long) -> Unit = {}, onMarkComplete: (() -> Unit)? = null) {
         composeRule.setContent {
@@ -34,6 +35,8 @@ class TrackCardTest {
                 state = state,
                 onPlay = onPlay,
                 onPause = onPause,
+                onRewind = onRewind,
+                onForward = onForward,
                 onVolumeChange = onVolumeChange,
                 onSpeedChange = onSpeedChange,
                 onSeek = onSeek,
@@ -126,6 +129,34 @@ class TrackCardTest {
         composeRule.onNodeWithTag("speed_slider")
             .performSemanticsAction(SemanticsActions.SetProgress) { it(2.0f) }
         assertEquals(2.0f, receivedSpeed, 0.001f)
+    }
+
+    @Test
+    fun rewindButtonIsDisplayed() {
+        setCard(TrackState())
+        composeRule.onNodeWithContentDescription("Rewind 10 seconds").assertIsDisplayed()
+    }
+
+    @Test
+    fun forwardButtonIsDisplayed() {
+        setCard(TrackState())
+        composeRule.onNodeWithContentDescription("Forward 30 seconds").assertIsDisplayed()
+    }
+
+    @Test
+    fun clickingRewindCallsOnRewind() {
+        var called = false
+        setCard(TrackState(), onRewind = { called = true })
+        composeRule.onNodeWithContentDescription("Rewind 10 seconds").performClick()
+        assertTrue(called)
+    }
+
+    @Test
+    fun clickingForwardCallsOnForward() {
+        var called = false
+        setCard(TrackState(), onForward = { called = true })
+        composeRule.onNodeWithContentDescription("Forward 30 seconds").performClick()
+        assertTrue(called)
     }
 
     @Test

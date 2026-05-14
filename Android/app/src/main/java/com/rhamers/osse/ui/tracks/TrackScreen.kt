@@ -19,8 +19,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Forward30
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.TaskAlt
 import androidx.compose.material.icons.filled.VolumeDown
 import androidx.compose.material.icons.filled.VolumeUp
@@ -211,6 +213,8 @@ private fun TrackPlayerCard(
         state = state,
         onPlay = trackPlayer::play,
         onPause = trackPlayer::pause,
+        onRewind = trackPlayer::rewind,
+        onForward = trackPlayer::forward,
         onVolumeChange = trackPlayer::setVolume,
         onSpeedChange = trackPlayer::setSpeed,
         onSeek = trackPlayer::seekTo,
@@ -226,6 +230,8 @@ fun TrackCard(
     state: TrackState,
     onPlay: () -> Unit,
     onPause: () -> Unit,
+    onRewind: () -> Unit,
+    onForward: () -> Unit,
     onVolumeChange: (Float) -> Unit,
     onSpeedChange: (Float) -> Unit,
     onSeek: (Long) -> Unit,
@@ -288,12 +294,16 @@ fun TrackCard(
                 }
             }
 
-            // Play / Pause
+            // Play / Pause / Seek
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                IconButton(onClick = onRewind) {
+                    Icon(Icons.Default.Replay10, contentDescription = "Rewind 10 seconds")
+                }
+                Spacer(Modifier.width(8.dp))
                 FilledIconButton(
                     onClick = { if (state.isPlaying) onPause() else onPlay() },
                     modifier = Modifier.size(56.dp)
@@ -303,6 +313,10 @@ fun TrackCard(
                         contentDescription = if (state.isPlaying) "Pause" else "Play",
                         modifier = Modifier.size(28.dp)
                     )
+                }
+                Spacer(Modifier.width(8.dp))
+                IconButton(onClick = onForward) {
+                    Icon(Icons.Default.Forward30, contentDescription = "Forward 30 seconds")
                 }
                 if (onMarkComplete != null && state.source != null) {
                     Spacer(Modifier.width(16.dp))

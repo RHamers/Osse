@@ -8,6 +8,7 @@ import android.os.IBinder
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.rhamers.osse.model.AudioSource
 import com.rhamers.osse.model.TrackId
 import org.junit.AfterClass
 import org.junit.Assert.*
@@ -125,6 +126,22 @@ class MultiTrackServiceTest {
         }
         assertEquals(0.3f, binder.getTrack(TrackId.PODCAST)!!.state.value.volume, 0.001f)
         assertEquals(1.0f, binder.getTrack(TrackId.MUSIC)!!.state.value.volume, 0.001f)
+    }
+
+    @Test
+    fun markCurrentEpisodeCompletePausesTrack() {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).apply {
+                setSource(AudioSource.RssFeed("https://example.com/ep.mp3"))
+                play()
+            }
+        }
+        instrumentation.runOnMainSync { binder.markCurrentEpisodeComplete() }
+        // Allow the IO coroutine to finish and its Main continuation to be posted
+        Thread.sleep(300)
+        // Drain the main Looper so the continuation (track.pause()) has run
+        instrumentation.runOnMainSync {}
+        assertFalse(binder.getTrack(TrackId.PODCAST)!!.player.playWhenReady)
     }
 
     @Test

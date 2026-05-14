@@ -96,6 +96,16 @@ class TrackPlayer(context: Context, val trackId: TrackId) {
         _state.value = _state.value.copy(positionMs = positionMs)
     }
 
+    fun rewind() {
+        seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L))
+    }
+
+    fun forward() {
+        val target = player.currentPosition + 30_000L
+        val duration = player.duration
+        seekTo(if (duration > 0) target.coerceAtMost(duration) else target)
+    }
+
     fun release() {
         scope.cancel()
         player.release()

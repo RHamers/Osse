@@ -131,10 +131,8 @@ class UpNextScreenTest {
         }
         composeRule.onNode(hasContentDescription("Play")).performClick()
 
-        composeRule.runOnIdle {
-            assertEquals(queued.enclosureUrl, playedUrl)
-            assertEquals(queued.episodeTitle, playedTitle)
-        }
+        assertEquals(queued.enclosureUrl, playedUrl)
+        assertEquals(queued.episodeTitle, playedTitle)
     }
 
     @Test fun removeButtonCallsRemoveFromQueueWithCorrectId() {
@@ -146,9 +144,8 @@ class UpNextScreenTest {
         }
         composeRule.onNode(hasContentDescription("Remove")).performClick()
 
-        composeRule.runOnIdle {
-            assertTrue(repo.removedQueueIds.contains(7L))
-        }
+        composeRule.waitUntil(2_000) { repo.removedQueueIds.contains(7L) }
+        assertTrue(repo.removedQueueIds.contains(7L))
     }
 
     @Test fun markAsDoneButtonIsDisplayedForEachItem() {
@@ -173,9 +170,7 @@ class UpNextScreenTest {
         }
         composeRule.onNode(hasContentDescription("Mark as done")).performClick()
 
-        composeRule.runOnIdle {
-            assertEquals(queued, completed)
-        }
+        assertEquals(queued, completed)
     }
 
     @Test fun dragHandleIsDisplayedForEachItem() {
