@@ -107,7 +107,7 @@ class MultiTrackService : MediaSessionService() {
         } ?: return
 
         val track = tracks[TrackId.PODCAST] ?: return
-        track.setSource(AudioSource.RssFeed(episode.enclosureUrl))
+        track.setSource(AudioSource.RssFeed(episode.enclosureUrl), episode.title)
         track.play()
         withContext(Dispatchers.IO) { db.queueItemDao().delete(first) }
     }

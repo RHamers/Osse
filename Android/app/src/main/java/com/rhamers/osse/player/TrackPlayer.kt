@@ -64,8 +64,8 @@ class TrackPlayer(context: Context, val trackId: TrackId) {
         }
     }
 
-    fun setSource(source: AudioSource) {
-        _state.value = _state.value.copy(source = source)
+    fun setSource(source: AudioSource, title: String? = null) {
+        _state.value = _state.value.copy(source = source, title = title)
         player.setMediaItem(source.toMediaItem())
         player.prepare()
     }

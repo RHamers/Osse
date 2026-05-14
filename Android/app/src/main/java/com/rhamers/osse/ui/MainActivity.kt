@@ -109,7 +109,7 @@ class MainActivity : ComponentActivity() {
 
                         Screen.UpNext -> UpNextScreen(
                             viewModel = podcastViewModel,
-                            onPlayEpisode = ::playEnclosureUrl,
+                            onPlayEpisode = ::playEpisodeFromQueue,
                             onMarkComplete = { item -> binder?.markComplete(item.id, item.enclosureUrl) },
                             contentPadding = contentPadding
                         )
@@ -135,15 +135,15 @@ class MainActivity : ComponentActivity() {
     private fun playEpisode(episode: Episode) {
         val b = binder ?: return
         val track = b.getTrack(TrackId.PODCAST) ?: b.addTrack(TrackId.PODCAST)
-        track.setSource(AudioSource.RssFeed(episode.enclosureUrl))
+        track.setSource(AudioSource.RssFeed(episode.enclosureUrl), episode.title)
         track.play()
         currentScreen = Screen.Tracks
     }
 
-    private fun playEnclosureUrl(enclosureUrl: String) {
+    private fun playEpisodeFromQueue(enclosureUrl: String, title: String) {
         val b = binder ?: return
         val track = b.getTrack(TrackId.PODCAST) ?: b.addTrack(TrackId.PODCAST)
-        track.setSource(AudioSource.RssFeed(enclosureUrl))
+        track.setSource(AudioSource.RssFeed(enclosureUrl), title)
         track.play()
         currentScreen = Screen.Tracks
     }

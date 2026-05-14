@@ -62,6 +62,14 @@ class TrackCardTest {
     }
 
     @Test
+    fun showsTitleInsteadOfUrlWhenTitleIsSet() {
+        val url = "https://example.com/episode.mp3"
+        setCard(TrackState(source = AudioSource.RssFeed(url), title = "My Episode Title"))
+        composeRule.onNodeWithText("My Episode Title").assertIsDisplayed()
+        composeRule.onNodeWithText(url).assertDoesNotExist()
+    }
+
+    @Test
     fun showsPlayButtonWhenNotPlaying() {
         setCard(TrackState(isPlaying = false))
         composeRule.onNodeWithContentDescription("Play").assertIsDisplayed()

@@ -34,7 +34,7 @@ class UpNextScreenTest {
     }
 
     private fun setContent(
-        onPlayEpisode: (String) -> Unit = {},
+        onPlayEpisode: (String, String) -> Unit = { _, _ -> },
         onMarkComplete: (QueueItem) -> Unit = {}
     ) {
         composeRule.setContent {
@@ -118,12 +118,13 @@ class UpNextScreenTest {
         composeRule.onNodeWithText("Episode Two").assertIsDisplayed()
     }
 
-    @Test fun playButtonInvokesOnPlayEpisodeWithCorrectUrl() {
+    @Test fun playButtonInvokesOnPlayEpisodeWithCorrectUrlAndTitle() {
         val queued = item(1, "Play Me", "Podcast")
         repo.queue.value = listOf(queued)
 
         var playedUrl: String? = null
-        setContent(onPlayEpisode = { playedUrl = it })
+        var playedTitle: String? = null
+        setContent(onPlayEpisode = { url, title -> playedUrl = url; playedTitle = title })
 
         composeRule.waitUntil(2_000) {
             composeRule.onAllNodes(hasContentDescription("Play")).fetchSemanticsNodes().isNotEmpty()
@@ -132,6 +133,7 @@ class UpNextScreenTest {
 
         composeRule.runOnIdle {
             assertEquals(queued.enclosureUrl, playedUrl)
+            assertEquals(queued.episodeTitle, playedTitle)
         }
     }
 

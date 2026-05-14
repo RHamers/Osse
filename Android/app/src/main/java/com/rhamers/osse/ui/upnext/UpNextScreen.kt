@@ -45,7 +45,7 @@ import sh.calvin.reorderable.rememberReorderableLazyListState
 @Composable
 fun UpNextScreen(
     viewModel: PodcastViewModel,
-    onPlayEpisode: (enclosureUrl: String) -> Unit,
+    onPlayEpisode: (enclosureUrl: String, title: String) -> Unit,
     onMarkComplete: (QueueItem) -> Unit,
     contentPadding: PaddingValues = PaddingValues()
 ) {
@@ -101,7 +101,7 @@ fun UpNextScreen(
                             },
                             trailingContent = {
                                 Row {
-                                    IconButton(onClick = { onPlayEpisode(item.enclosureUrl) }) {
+                                    IconButton(onClick = { onPlayEpisode(item.enclosureUrl, item.episodeTitle) }) {
                                         Icon(Icons.Default.PlayArrow, contentDescription = "Play")
                                     }
                                     IconButton(onClick = { onMarkComplete(item) }) {

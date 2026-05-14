@@ -258,7 +258,7 @@ fun TrackCard(
 
             // Source
             Text(
-                text = state.source?.toDisplayString() ?: "No source loaded",
+                text = state.title ?: state.source?.toDisplayString() ?: "No source loaded",
                 style = MaterialTheme.typography.bodySmall,
                 color = if (state.source != null) MaterialTheme.colorScheme.onSurface
                         else MaterialTheme.colorScheme.onSurfaceVariant,
