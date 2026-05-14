@@ -54,4 +54,7 @@ class FakePodcastRepository : PodcastRepository {
     override suspend fun toggleAutoQueue(feedUrl: String, autoQueue: Boolean) {
         lastAutoQueueToggle = feedUrl to autoQueue
     }
+
+    val completedGuids = mutableListOf<String>()
+    override suspend fun markEpisodeCompleted(guid: String) { completedGuids += guid }
 }

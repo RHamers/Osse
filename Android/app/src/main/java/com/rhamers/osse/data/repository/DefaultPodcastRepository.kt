@@ -145,13 +145,17 @@ class DefaultPodcastRepository(
     override suspend fun toggleAutoQueue(feedUrl: String, autoQueue: Boolean) = withContext(Dispatchers.IO) {
         podcastDao.setAutoQueue(feedUrl, autoQueue)
     }
+
+    override suspend fun markEpisodeCompleted(guid: String) = withContext(Dispatchers.IO) {
+        episodeDao.setCompleted(guid, true)
+    }
 }
 
 private fun PodcastEntity.toDomain() =
     Podcast(feedUrl, title, artworkUrl, description, autoQueue, subscribedAt)
 
 private fun EpisodeEntity.toDomain() =
-    Episode(guid, podcastFeedUrl, title, enclosureUrl, durationMs, showNotes, pubDateMs, positionMs)
+    Episode(guid, podcastFeedUrl, title, enclosureUrl, durationMs, showNotes, pubDateMs, positionMs, completed)
 
 private fun QueueItemWithDetails.toDomain() =
     QueueItem(id, position, episodeGuid, episodeTitle, podcastTitle, durationMs, enclosureUrl)

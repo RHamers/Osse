@@ -52,4 +52,7 @@ interface QueueItemDao {
 
     @Query("UPDATE queue_items SET position = :position WHERE id = :id")
     suspend fun updatePosition(id: Long, position: Int)
+
+    @Query("DELETE FROM queue_items WHERE episodeGuid = :guid")
+    suspend fun deleteByGuid(guid: String)
 }

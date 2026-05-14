@@ -9,7 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [PodcastEntity::class, EpisodeEntity::class, QueueItemEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class OsseDatabase : RoomDatabase() {
@@ -18,6 +18,12 @@ abstract class OsseDatabase : RoomDatabase() {
     abstract fun queueItemDao(): QueueItemDao
 
     companion object {
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE episodes ADD COLUMN completed INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         private val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE podcasts ADD COLUMN autoQueue INTEGER NOT NULL DEFAULT 1")
@@ -40,7 +46,7 @@ abstract class OsseDatabase : RoomDatabase() {
                 OsseDatabase::class.java,
                 "osse.db"
             )
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build()
                 .also { instance = it }
         }

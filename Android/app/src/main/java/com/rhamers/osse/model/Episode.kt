@@ -8,5 +8,6 @@ data class Episode(
     val durationMs: Long,
     val showNotes: String?,
     val pubDateMs: Long,
-    val positionMs: Long = 0L
+    val positionMs: Long = 0L,
+    val completed: Boolean = false
 )

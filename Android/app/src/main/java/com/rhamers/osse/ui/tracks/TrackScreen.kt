@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.TaskAlt
 import androidx.compose.material.icons.filled.VolumeDown
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.AlertDialog
@@ -30,6 +31,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
@@ -124,7 +126,8 @@ fun TrackScreen(
                                     .fillMaxHeight(),
                                 scrollable = true,
                                 label = id.displayName,
-                                trackPlayer = track
+                                trackPlayer = track,
+                                onMarkComplete = if (id == TrackId.PODCAST) binder::markCurrentEpisodeComplete else null
                             )
                         }
                     }
@@ -144,7 +147,8 @@ fun TrackScreen(
                                 modifier = Modifier.fillMaxWidth(),
                                 scrollable = false,
                                 label = id.displayName,
-                                trackPlayer = track
+                                trackPlayer = track,
+                                onMarkComplete = if (id == TrackId.PODCAST) binder::markCurrentEpisodeComplete else null
                             )
                         }
                     }
@@ -196,7 +200,8 @@ private fun TrackPlayerCard(
     modifier: Modifier,
     scrollable: Boolean,
     label: String,
-    trackPlayer: TrackPlayer
+    trackPlayer: TrackPlayer,
+    onMarkComplete: (() -> Unit)? = null
 ) {
     val state by trackPlayer.state.collectAsState()
     TrackCard(
@@ -208,7 +213,8 @@ private fun TrackPlayerCard(
         onPause = trackPlayer::pause,
         onVolumeChange = trackPlayer::setVolume,
         onSpeedChange = trackPlayer::setSpeed,
-        onSeek = trackPlayer::seekTo
+        onSeek = trackPlayer::seekTo,
+        onMarkComplete = onMarkComplete
     )
 }
 
@@ -222,7 +228,8 @@ fun TrackCard(
     onPause: () -> Unit,
     onVolumeChange: (Float) -> Unit,
     onSpeedChange: (Float) -> Unit,
-    onSeek: (Long) -> Unit
+    onSeek: (Long) -> Unit,
+    onMarkComplete: (() -> Unit)? = null
 ) {
     Card(modifier = modifier) {
         Column(
@@ -282,17 +289,31 @@ fun TrackCard(
             }
 
             // Play / Pause
-            FilledIconButton(
-                onClick = { if (state.isPlaying) onPause() else onPlay() },
-                modifier = Modifier
-                    .size(56.dp)
-                    .align(Alignment.CenterHorizontally)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    imageVector = if (state.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    contentDescription = if (state.isPlaying) "Pause" else "Play",
-                    modifier = Modifier.size(28.dp)
-                )
+                FilledIconButton(
+                    onClick = { if (state.isPlaying) onPause() else onPlay() },
+                    modifier = Modifier.size(56.dp)
+                ) {
+                    Icon(
+                        imageVector = if (state.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = if (state.isPlaying) "Pause" else "Play",
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+                if (onMarkComplete != null && state.source != null) {
+                    Spacer(Modifier.width(16.dp))
+                    IconButton(onClick = onMarkComplete) {
+                        Icon(
+                            Icons.Default.TaskAlt,
+                            contentDescription = "Mark as done",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
             }
 
             // Volume

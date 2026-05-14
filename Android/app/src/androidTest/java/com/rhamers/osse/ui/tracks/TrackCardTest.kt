@@ -27,7 +27,7 @@ class TrackCardTest {
 
     private fun setCard(state: TrackState, onPlay: () -> Unit = {}, onPause: () -> Unit = {},
                         onVolumeChange: (Float) -> Unit = {}, onSpeedChange: (Float) -> Unit = {},
-                        onSeek: (Long) -> Unit = {}) {
+                        onSeek: (Long) -> Unit = {}, onMarkComplete: (() -> Unit)? = null) {
         composeRule.setContent {
             TrackCard(
                 label = "Podcast",
@@ -36,7 +36,8 @@ class TrackCardTest {
                 onPause = onPause,
                 onVolumeChange = onVolumeChange,
                 onSpeedChange = onSpeedChange,
-                onSeek = onSeek
+                onSeek = onSeek,
+                onMarkComplete = onMarkComplete
             )
         }
     }
@@ -146,5 +147,37 @@ class TrackCardTest {
         setCard(TrackState(durationMs = 90_000L, positionMs = 30_000L))
         composeRule.onNodeWithText("0:30").assertIsDisplayed()
         composeRule.onNodeWithText("1:30").assertIsDisplayed()
+    }
+
+    @Test
+    fun markAsDoneButtonHiddenWhenCallbackIsNull() {
+        setCard(TrackState(source = AudioSource.RssFeed("https://example.com/ep.mp3")))
+        composeRule.onNodeWithContentDescription("Mark as done").assertDoesNotExist()
+    }
+
+    @Test
+    fun markAsDoneButtonHiddenWhenSourceIsNull() {
+        setCard(TrackState(source = null), onMarkComplete = {})
+        composeRule.onNodeWithContentDescription("Mark as done").assertDoesNotExist()
+    }
+
+    @Test
+    fun markAsDoneButtonShownWhenCallbackProvidedAndSourceLoaded() {
+        setCard(
+            TrackState(source = AudioSource.RssFeed("https://example.com/ep.mp3")),
+            onMarkComplete = {}
+        )
+        composeRule.onNodeWithContentDescription("Mark as done").assertIsDisplayed()
+    }
+
+    @Test
+    fun clickingMarkAsDoneCallsCallback() {
+        var called = false
+        setCard(
+            TrackState(source = AudioSource.RssFeed("https://example.com/ep.mp3")),
+            onMarkComplete = { called = true }
+        )
+        composeRule.onNodeWithContentDescription("Mark as done").performClick()
+        assertTrue(called)
     }
 }

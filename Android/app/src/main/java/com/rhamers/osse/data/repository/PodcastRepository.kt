@@ -20,4 +20,5 @@ interface PodcastRepository {
     suspend fun removeFromQueue(id: Long)
     suspend fun reorderQueue(items: List<QueueItem>)
     suspend fun toggleAutoQueue(feedUrl: String, autoQueue: Boolean)
+    suspend fun markEpisodeCompleted(guid: String)
 }

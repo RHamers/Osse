@@ -101,6 +101,21 @@ class QueueItemDaoTest {
         assertNull(queueItemDao.peekFirst())
     }
 
+    @Test fun `deleteByGuid removes the item for that episode`() = runBlocking {
+        seed("ep1", "ep2")
+        queueItemDao.insert(item("ep1", 0))
+        queueItemDao.insert(item("ep2", 1))
+        queueItemDao.deleteByGuid("ep1")
+        assertEquals(listOf("ep2"), queueItemDao.getAllGuids())
+    }
+
+    @Test fun `deleteByGuid is a no-op when guid is not in queue`() = runBlocking {
+        seed("ep1")
+        queueItemDao.insert(item("ep1", 0))
+        queueItemDao.deleteByGuid("ep-not-present")
+        assertEquals(listOf("ep1"), queueItemDao.getAllGuids())
+    }
+
     @Test fun `deleteById leaves other items untouched`() = runBlocking {
         seed("ep1", "ep2")
         queueItemDao.insert(item("ep1", 0))

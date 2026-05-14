@@ -7,6 +7,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -119,6 +121,36 @@ class OsseDatabaseTest {
         episodeDao.upsertAll(listOf(episode(guid = "ep1", positionMs = 0L)))
         episodeDao.updatePosition("ep1", 60_000L)
         assertEquals(60_000L, episodeDao.observeForPodcast(FEED_URL).first()[0].positionMs)
+    }
+
+    @Test fun `setCompleted marks episode as completed`() = runBlocking {
+        podcastDao.upsert(podcast(FEED_URL))
+        episodeDao.upsertAll(listOf(episode(guid = "ep1")))
+        episodeDao.setCompleted("ep1", true)
+        val result = episodeDao.observeForPodcast(FEED_URL).first()
+        assertTrue(result[0].completed)
+    }
+
+    @Test fun `setCompleted can be set back to false`() = runBlocking {
+        podcastDao.upsert(podcast(FEED_URL))
+        episodeDao.upsertAll(listOf(episode(guid = "ep1")))
+        episodeDao.setCompleted("ep1", true)
+        episodeDao.setCompleted("ep1", false)
+        val result = episodeDao.observeForPodcast(FEED_URL).first()
+        assertFalse(result[0].completed)
+    }
+
+    @Test fun `getByEnclosureUrl returns matching episode`() = runBlocking {
+        podcastDao.upsert(podcast(FEED_URL))
+        episodeDao.upsertAll(listOf(episode(guid = "ep1")))
+        val url = "https://example.com/ep1.mp3"
+        val result = episodeDao.getByEnclosureUrl(url)
+        assertNotNull(result)
+        assertEquals("ep1", result!!.guid)
+    }
+
+    @Test fun `getByEnclosureUrl returns null when no match`() = runBlocking {
+        assertNull(episodeDao.getByEnclosureUrl("https://example.com/no-such.mp3"))
     }
 
     @Test fun `deleting podcast cascades to episodes`() = runBlocking {

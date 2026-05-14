@@ -17,6 +17,12 @@ interface EpisodeDao {
     @Query("SELECT * FROM episodes WHERE guid = :guid")
     suspend fun getByGuid(guid: String): EpisodeEntity?
 
+    @Query("SELECT * FROM episodes WHERE enclosureUrl = :url LIMIT 1")
+    suspend fun getByEnclosureUrl(url: String): EpisodeEntity?
+
     @Query("UPDATE episodes SET positionMs = :positionMs WHERE guid = :guid")
     suspend fun updatePosition(guid: String, positionMs: Long)
+
+    @Query("UPDATE episodes SET completed = :completed WHERE guid = :guid")
+    suspend fun setCompleted(guid: String, completed: Boolean)
 }

@@ -44,6 +44,21 @@ class MultiTrackService : MediaSessionService() {
 
         fun getAllTracks(): Map<TrackId, TrackPlayer> = tracks.toMap()
 
+        fun markCurrentEpisodeComplete() {
+            serviceScope.launch {
+                val enclosureUrl = (tracks[TrackId.PODCAST]?.state?.value?.source as? AudioSource.RssFeed)?.enclosureUrl
+                    ?: return@launch
+                withContext(Dispatchers.IO) {
+                    val db = OsseDatabase.get(this@MultiTrackService)
+                    db.episodeDao().getByEnclosureUrl(enclosureUrl)?.let { episode ->
+                        db.episodeDao().setCompleted(episode.guid, true)
+                        db.queueItemDao().deleteByGuid(episode.guid)
+                    }
+                }
+                autoAdvance()
+            }
+        }
+
         fun markComplete(itemId: Long, enclosureUrl: String) {
             serviceScope.launch {
                 withContext(Dispatchers.IO) {
