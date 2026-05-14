@@ -6,28 +6,44 @@ import android.os.IBinder
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.rhamers.osse.model.TrackId
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 class MultiTrackService : MediaSessionService() {
 
     private val tracks = mutableMapOf<TrackId, TrackPlayer>()
     private var mediaSession: MediaSession? = null
+    private val _activeTrackIds = MutableStateFlow<List<TrackId>>(emptyList())
 
     inner class LocalBinder : Binder() {
+        val activeTrackIds: StateFlow<List<TrackId>> = _activeTrackIds.asStateFlow()
+
         fun getTrack(id: TrackId): TrackPlayer? = tracks[id]
+
+        fun addTrack(id: TrackId): TrackPlayer {
+            tracks[id]?.let { return it }
+            val player = TrackPlayer(this@MultiTrackService, id)
+            tracks[id] = player
+            _activeTrackIds.value = _activeTrackIds.value + id
+            if (id == TrackId.PODCAST && mediaSession == null) {
+                mediaSession = MediaSession.Builder(this@MultiTrackService, player.player).build()
+            }
+            return player
+        }
+
         fun getAllTracks(): Map<TrackId, TrackPlayer> = tracks.toMap()
+
+        fun clearTracksForTesting() {
+            mediaSession?.release()
+            mediaSession = null
+            tracks.values.forEach { it.release() }
+            tracks.clear()
+            _activeTrackIds.value = emptyList()
+        }
     }
 
     private val binder = LocalBinder()
-
-    override fun onCreate() {
-        super.onCreate()
-        TrackId.entries.forEach { id ->
-            tracks[id] = TrackPlayer(this, id)
-        }
-        // MediaSession points to the podcast player — routes system notifications
-        // and headphone buttons to the primary track. Music track runs headless.
-        mediaSession = MediaSession.Builder(this, tracks[TrackId.PODCAST]!!.player).build()
-    }
 
     override fun onBind(intent: Intent?): IBinder? {
         // MediaSessionService.onBind returns its binder for SERVICE_INTERFACE intents

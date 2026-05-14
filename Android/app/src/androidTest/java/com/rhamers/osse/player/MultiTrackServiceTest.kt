@@ -24,6 +24,7 @@ class MultiTrackServiceTest {
     companion object {
         private lateinit var binder: MultiTrackService.LocalBinder
         private var conn: ServiceConnection? = null
+        private val instrumentation = InstrumentationRegistry.getInstrumentation()
 
         @BeforeClass @JvmStatic
         fun bindService() {
@@ -47,15 +48,9 @@ class MultiTrackServiceTest {
         }
     }
 
-    // Reset track state before each test so state-mutating tests don't pollute each other
     @Before
-    fun resetTracks() {
-        InstrumentationRegistry.getInstrumentation().runOnMainSync {
-            binder.getAllTracks().values.forEach { track ->
-                track.setVolume(1.0f)
-                track.setSpeed(1.0f)
-            }
-        }
+    fun clearTracks() {
+        instrumentation.runOnMainSync { binder.clearTracksForTesting() }
     }
 
     @Test
@@ -64,36 +59,68 @@ class MultiTrackServiceTest {
     }
 
     @Test
-    fun allTracksCreatedOnBind() {
-        val tracks = binder.getAllTracks()
-        assertEquals(2, tracks.size)
-        assertTrue(tracks.containsKey(TrackId.PODCAST))
-        assertTrue(tracks.containsKey(TrackId.MUSIC))
+    fun activeTrackIdsEmptyOnBind() {
+        assertEquals(emptyList<TrackId>(), binder.activeTrackIds.value)
     }
 
     @Test
-    fun podcastTrackHasCorrectId() {
-        assertEquals(TrackId.PODCAST, binder.getTrack(TrackId.PODCAST)?.trackId)
+    fun getTrackReturnsNullBeforeAdding() {
+        assertNull(binder.getTrack(TrackId.PODCAST))
+        assertNull(binder.getTrack(TrackId.MUSIC))
     }
 
     @Test
-    fun musicTrackHasCorrectId() {
-        assertEquals(TrackId.MUSIC, binder.getTrack(TrackId.MUSIC)?.trackId)
+    fun addTrackMakesItRetrievable() {
+        instrumentation.runOnMainSync { binder.addTrack(TrackId.PODCAST) }
+        val track = binder.getTrack(TrackId.PODCAST)
+        assertNotNull(track)
+        assertEquals(TrackId.PODCAST, track!!.trackId)
     }
 
     @Test
-    fun tracksHaveDefaultState() {
-        for (id in TrackId.entries) {
-            val state = binder.getTrack(id)!!.state.value
-            assertFalse("track $id should not be playing", state.isPlaying)
-            assertEquals("track $id volume default", 1.0f, state.volume, 0.001f)
-            assertEquals("track $id speed default", 1.0f, state.speed, 0.001f)
+    fun addTrackAppearsInActiveIds() {
+        instrumentation.runOnMainSync { binder.addTrack(TrackId.PODCAST) }
+        assertTrue(binder.activeTrackIds.value.contains(TrackId.PODCAST))
+        assertFalse(binder.activeTrackIds.value.contains(TrackId.MUSIC))
+    }
+
+    @Test
+    fun addingBothTracksPopulatesActiveIds() {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST)
+            binder.addTrack(TrackId.MUSIC)
         }
+        assertEquals(2, binder.activeTrackIds.value.size)
+        assertTrue(binder.activeTrackIds.value.containsAll(TrackId.entries))
+    }
+
+    @Test
+    fun addTrackTwiceReturnsSameInstance() {
+        lateinit var first: TrackPlayer
+        lateinit var second: TrackPlayer
+        instrumentation.runOnMainSync {
+            first = binder.addTrack(TrackId.PODCAST)
+            second = binder.addTrack(TrackId.PODCAST)
+        }
+        assertSame(first, second)
+        assertEquals(1, binder.activeTrackIds.value.size)
+    }
+
+    @Test
+    fun addedTrackHasDefaultState() {
+        instrumentation.runOnMainSync { binder.addTrack(TrackId.PODCAST) }
+        val state = binder.getTrack(TrackId.PODCAST)!!.state.value
+        assertFalse(state.isPlaying)
+        assertEquals(1.0f, state.volume, 0.001f)
+        assertEquals(1.0f, state.speed, 0.001f)
+        assertNull(state.source)
     }
 
     @Test
     fun volumeChangesOnPodcastDoNotAffectMusic() {
-        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST)
+            binder.addTrack(TrackId.MUSIC)
             binder.getTrack(TrackId.PODCAST)!!.setVolume(0.3f)
         }
         assertEquals(0.3f, binder.getTrack(TrackId.PODCAST)!!.state.value.volume, 0.001f)
@@ -102,7 +129,9 @@ class MultiTrackServiceTest {
 
     @Test
     fun speedChangesOnMusicDoNotAffectPodcast() {
-        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST)
+            binder.addTrack(TrackId.MUSIC)
             binder.getTrack(TrackId.MUSIC)!!.setSpeed(2.0f)
         }
         assertEquals(2.0f, binder.getTrack(TrackId.MUSIC)!!.state.value.speed, 0.001f)

@@ -22,6 +22,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModelProvider
 import com.rhamers.osse.data.db.OsseDatabase
+import com.rhamers.osse.data.repository.DefaultPodcastRepository
 import com.rhamers.osse.model.AudioSource
 import com.rhamers.osse.model.Episode
 import com.rhamers.osse.model.TrackId
@@ -49,9 +50,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        val db = OsseDatabase.get(this)
         podcastViewModel = ViewModelProvider(
             this,
-            PodcastViewModel.Factory(OsseDatabase.get(this))
+            PodcastViewModel.Factory(DefaultPodcastRepository(db.podcastDao(), db.episodeDao()))
         )[PodcastViewModel::class.java]
 
         setContent {
@@ -113,10 +115,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun playEpisode(episode: Episode) {
-        binder?.getTrack(TrackId.PODCAST)?.let { track ->
-            track.setSource(AudioSource.RssFeed(episode.enclosureUrl))
-            track.play()
-        }
+        val b = binder ?: return
+        val track = b.getTrack(TrackId.PODCAST) ?: b.addTrack(TrackId.PODCAST)
+        track.setSource(AudioSource.RssFeed(episode.enclosureUrl))
+        track.play()
         currentScreen = Screen.Tracks
     }
 }

@@ -4,7 +4,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.rhamers.osse.data.api.PodcastIndexFeed
-import com.rhamers.osse.data.db.OsseDatabase
 import com.rhamers.osse.data.repository.PodcastRepository
 import com.rhamers.osse.model.Episode
 import com.rhamers.osse.model.Podcast
@@ -74,9 +73,9 @@ class PodcastViewModel(private val repo: PodcastRepository) : ViewModel() {
         }
     }
 
-    class Factory(private val db: OsseDatabase) : ViewModelProvider.Factory {
+    class Factory(private val repo: PodcastRepository) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            PodcastViewModel(PodcastRepository(db.podcastDao(), db.episodeDao())) as T
+            PodcastViewModel(repo) as T
     }
 }

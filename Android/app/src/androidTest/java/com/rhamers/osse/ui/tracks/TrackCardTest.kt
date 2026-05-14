@@ -1,13 +1,15 @@
 package com.rhamers.osse.ui.tracks
 
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.rhamers.osse.model.AudioSource
 import com.rhamers.osse.model.TrackState
@@ -97,15 +99,24 @@ class TrackCardTest {
     }
 
     @Test
-    fun correctSpeedChipIsSelected() {
-        setCard(TrackState(speed = 1.5f))
-        composeRule.onNodeWithText("1.5x").assertIsSelected()
+    fun showsDefaultSpeedLabel() {
+        setCard(TrackState(speed = 1.0f))
+        composeRule.onNodeWithText("1.0x").assertIsDisplayed()
     }
 
     @Test
-    fun defaultSpeedChipIsSelected() {
-        setCard(TrackState(speed = 1.0f))
-        composeRule.onNodeWithText("1.0x").assertIsSelected()
+    fun showsCurrentSpeedLabel() {
+        setCard(TrackState(speed = 1.5f))
+        composeRule.onNodeWithText("1.5x").assertIsDisplayed()
+    }
+
+    @Test
+    fun speedSliderCallsOnSpeedChange() {
+        var receivedSpeed = -1f
+        setCard(TrackState(speed = 1.0f), onSpeedChange = { receivedSpeed = it })
+        composeRule.onNodeWithTag("speed_slider")
+            .performSemanticsAction(SemanticsActions.SetProgress) { it(2.0f) }
+        assertEquals(2.0f, receivedSpeed, 0.001f)
     }
 
     @Test
@@ -125,17 +136,8 @@ class TrackCardTest {
     }
 
     @Test
-    fun clickingSpeedChipCallsOnSpeedChangeWithCorrectValue() {
-        var receivedSpeed = -1f
-        setCard(TrackState(speed = 1.0f), onSpeedChange = { receivedSpeed = it })
-        composeRule.onNodeWithText("2.0x").performClick()
-        assertEquals(2.0f, receivedSpeed, 0.001f)
-    }
-
-    @Test
     fun positionControlsHiddenWhenDurationIsZero() {
         setCard(TrackState(durationMs = 0L, positionMs = 0L))
-        // Time labels only appear when durationMs > 0
         composeRule.onAllNodesWithText("0:00").assertCountEquals(0)
     }
 
@@ -144,13 +146,5 @@ class TrackCardTest {
         setCard(TrackState(durationMs = 90_000L, positionMs = 30_000L))
         composeRule.onNodeWithText("0:30").assertIsDisplayed()
         composeRule.onNodeWithText("1:30").assertIsDisplayed()
-    }
-
-    @Test
-    fun allSixSpeedChipsArePresent() {
-        setCard(TrackState())
-        listOf("0.5x", "0.75x", "1.0x", "1.25x", "1.5x", "2.0x").forEach { label ->
-            composeRule.onNodeWithText(label).assertIsDisplayed()
-        }
     }
 }
