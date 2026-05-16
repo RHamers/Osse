@@ -6,6 +6,6 @@ enum class TrackId {
 }
 
 val TrackId.displayName: String get() = when (this) {
-    TrackId.PODCAST -> "Podcast"
-    TrackId.MUSIC -> "Music"
+    TrackId.PODCAST -> "Track 1"
+    TrackId.MUSIC -> "Track 2"
 }

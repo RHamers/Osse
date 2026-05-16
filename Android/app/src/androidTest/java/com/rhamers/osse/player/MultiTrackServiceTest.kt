@@ -8,6 +8,7 @@ import android.os.IBinder
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.rhamers.osse.data.db.OsseDatabase
 import com.rhamers.osse.model.AudioSource
 import com.rhamers.osse.model.TrackId
 import org.junit.AfterClass
@@ -52,6 +53,8 @@ class MultiTrackServiceTest {
     @Before
     fun clearTracks() {
         instrumentation.runOnMainSync { binder.clearTracksForTesting() }
+        // Clear the DB so autoAdvance() finds an empty queue and doesn't re-trigger play()
+        OsseDatabase.get(ApplicationProvider.getApplicationContext()).clearAllTables()
     }
 
     @Test
@@ -141,7 +144,11 @@ class MultiTrackServiceTest {
         Thread.sleep(300)
         // Drain the main Looper so the continuation (track.pause()) has run
         instrumentation.runOnMainSync {}
-        assertFalse(binder.getTrack(TrackId.PODCAST)!!.player.playWhenReady)
+        var playWhenReady = true
+        instrumentation.runOnMainSync {
+            playWhenReady = binder.getTrack(TrackId.PODCAST)!!.player.playWhenReady
+        }
+        assertFalse(playWhenReady)
     }
 
     @Test

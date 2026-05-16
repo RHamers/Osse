@@ -61,8 +61,12 @@ class TrackScreenTest {
     }
 
     @Before
-    fun clearTracks() {
-        instrumentation.runOnMainSync { binder.clearTracksForTesting() }
+    fun resetTracks() {
+        instrumentation.runOnMainSync {
+            binder.clearTracksForTesting()
+            binder.addTrack(TrackId.PODCAST)
+            binder.addTrack(TrackId.MUSIC)
+        }
     }
 
     @Test
@@ -82,67 +86,47 @@ class TrackScreenTest {
     }
 
     @Test
-    fun showsEmptyStateWhenNoTracks() {
+    fun showsTrack1Label() {
         composeRule.setContent {
             OsseTheme { TrackScreen(binder = binder) }
         }
-        composeRule.onNodeWithText("No tracks").assertIsDisplayed()
+        composeRule.onNodeWithText("Track 1").assertIsDisplayed()
     }
 
     @Test
-    fun showsAddTrackButtonWhenEmpty() {
+    fun showsTrack2Label() {
         composeRule.setContent {
             OsseTheme { TrackScreen(binder = binder) }
         }
-        composeRule.onNodeWithText("Add Track").assertIsDisplayed()
+        composeRule.onNodeWithText("Track 2").assertIsDisplayed()
     }
 
     @Test
-    fun showsTrackCardAfterAddingTrack() {
-        instrumentation.runOnMainSync { binder.addTrack(TrackId.PODCAST) }
+    fun showsNoSourceLoadedForBothTracks() {
         composeRule.setContent {
             OsseTheme { TrackScreen(binder = binder) }
         }
-        composeRule.onNodeWithText("Podcast").assertIsDisplayed()
+        composeRule.onAllNodes(hasContentDescription("Select source")).assertCountEquals(2)
     }
 
     @Test
-    fun showsNoSourceLoadedAfterAddingTrack() {
-        instrumentation.runOnMainSync { binder.addTrack(TrackId.PODCAST) }
+    fun bothTracksShowPlayButton() {
         composeRule.setContent {
             OsseTheme { TrackScreen(binder = binder) }
         }
-        composeRule.onNodeWithText("No source loaded").assertIsDisplayed()
+        composeRule.onAllNodes(hasContentDescription("Play")).assertCountEquals(2)
     }
 
     @Test
-    fun showsBothTrackLabelsAfterAddingBoth() {
-        instrumentation.runOnMainSync {
-            binder.addTrack(TrackId.PODCAST)
-            binder.addTrack(TrackId.MUSIC)
-        }
+    fun bothTracksShowSourceDropdown() {
         composeRule.setContent {
             OsseTheme { TrackScreen(binder = binder) }
         }
-        composeRule.onNodeWithText("Podcast").assertIsDisplayed()
-        composeRule.onNodeWithText("Music").assertIsDisplayed()
+        composeRule.onAllNodes(hasContentDescription("Select source")).assertCountEquals(2)
     }
 
     @Test
-    fun fabShownWhenOneTrackMissing() {
-        instrumentation.runOnMainSync { binder.addTrack(TrackId.PODCAST) }
-        composeRule.setContent {
-            OsseTheme { TrackScreen(binder = binder) }
-        }
-        composeRule.onNodeWithContentDescription("Add track").assertIsDisplayed()
-    }
-
-    @Test
-    fun fabNotShownWhenAllTracksAdded() {
-        instrumentation.runOnMainSync {
-            binder.addTrack(TrackId.PODCAST)
-            binder.addTrack(TrackId.MUSIC)
-        }
+    fun noAddTrackButtonShown() {
         composeRule.setContent {
             OsseTheme { TrackScreen(binder = binder) }
         }
@@ -150,23 +134,10 @@ class TrackScreenTest {
     }
 
     @Test
-    fun emptyStateHiddenAfterAddingTrack() {
-        instrumentation.runOnMainSync { binder.addTrack(TrackId.PODCAST) }
+    fun noEmptyStateShown() {
         composeRule.setContent {
             OsseTheme { TrackScreen(binder = binder) }
         }
         composeRule.onNodeWithText("No tracks").assertDoesNotExist()
-    }
-
-    @Test
-    fun bothTracksShowPlayButtonAfterAdding() {
-        instrumentation.runOnMainSync {
-            binder.addTrack(TrackId.PODCAST)
-            binder.addTrack(TrackId.MUSIC)
-        }
-        composeRule.setContent {
-            OsseTheme { TrackScreen(binder = binder) }
-        }
-        composeRule.onAllNodes(hasContentDescription("Play")).assertCountEquals(2)
     }
 }

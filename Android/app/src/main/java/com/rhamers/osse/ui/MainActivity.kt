@@ -9,6 +9,8 @@ import android.os.IBinder
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.Headphones
@@ -40,6 +42,9 @@ class MainActivity : ComponentActivity() {
     private var binder by mutableStateOf<MultiTrackService.LocalBinder?>(null)
     private var currentScreen by mutableStateOf<Screen>(Screen.Tracks)
 
+    private var pendingTrackId = TrackId.PODCAST
+    private lateinit var filePickerLauncher: ActivityResultLauncher<Array<String>>
+
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, service: IBinder) {
             binder = service as MultiTrackService.LocalBinder
@@ -52,6 +57,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        filePickerLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) {
+                binder?.getTrack(pendingTrackId)?.setSource(AudioSource.LocalFile(uri))
+            }
+        }
+
         val db = OsseDatabase.get(this)
         podcastViewModel = ViewModelProvider(
             this,
@@ -87,7 +99,18 @@ class MainActivity : ComponentActivity() {
                     }
                 ) { contentPadding ->
                     when (val screen = currentScreen) {
-                        Screen.Tracks -> TrackScreen(binder, contentPadding)
+                        Screen.Tracks -> TrackScreen(
+                            binder = binder,
+                            contentPadding = contentPadding,
+                            onSelectPodcast = { trackId ->
+                                pendingTrackId = trackId
+                                currentScreen = Screen.PodcastSearch
+                            },
+                            onSelectLocalFile = { trackId ->
+                                pendingTrackId = trackId
+                                filePickerLauncher.launch(arrayOf("audio/*"))
+                            }
+                        )
 
                         Screen.PodcastSearch -> PodcastSearchScreen(
                             viewModel = podcastViewModel,
@@ -134,7 +157,7 @@ class MainActivity : ComponentActivity() {
 
     private fun playEpisode(episode: Episode) {
         val b = binder ?: return
-        val track = b.getTrack(TrackId.PODCAST) ?: b.addTrack(TrackId.PODCAST)
+        val track = b.getTrack(pendingTrackId) ?: b.addTrack(pendingTrackId)
         track.setSource(AudioSource.RssFeed(episode.enclosureUrl), episode.title)
         track.play()
         currentScreen = Screen.Tracks

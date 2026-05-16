@@ -44,9 +44,11 @@ class MultiTrackService : MediaSessionService() {
 
         fun getAllTracks(): Map<TrackId, TrackPlayer> = tracks.toMap()
 
-        fun markCurrentEpisodeComplete() {
+        fun markCurrentEpisodeComplete() = markEpisodeComplete(TrackId.PODCAST)
+
+        fun markEpisodeComplete(id: TrackId) {
             serviceScope.launch {
-                val track = tracks[TrackId.PODCAST] ?: return@launch
+                val track = tracks[id] ?: return@launch
                 val enclosureUrl = (track.state.value.source as? AudioSource.RssFeed)?.enclosureUrl
                     ?: return@launch
                 withContext(Dispatchers.IO) {
@@ -57,7 +59,7 @@ class MultiTrackService : MediaSessionService() {
                     }
                 }
                 track.pause()
-                autoAdvance()
+                if (id == TrackId.PODCAST) autoAdvance()
             }
         }
 
@@ -81,6 +83,12 @@ class MultiTrackService : MediaSessionService() {
     }
 
     private val binder = LocalBinder()
+
+    override fun onCreate() {
+        super.onCreate()
+        binder.addTrack(TrackId.PODCAST)
+        binder.addTrack(TrackId.MUSIC)
+    }
 
     override fun onBind(intent: Intent?): IBinder? {
         // MediaSessionService.onBind returns its binder for SERVICE_INTERFACE intents

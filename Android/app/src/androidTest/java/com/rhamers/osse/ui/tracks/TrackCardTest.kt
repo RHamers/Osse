@@ -25,13 +25,22 @@ class TrackCardTest {
     @get:Rule
     val composeRule = createComposeRule()
 
-    private fun setCard(state: TrackState, onPlay: () -> Unit = {}, onPause: () -> Unit = {},
-                        onRewind: () -> Unit = {}, onForward: () -> Unit = {},
-                        onVolumeChange: (Float) -> Unit = {}, onSpeedChange: (Float) -> Unit = {},
-                        onSeek: (Long) -> Unit = {}, onMarkComplete: (() -> Unit)? = null) {
+    private fun setCard(
+        state: TrackState,
+        onPlay: () -> Unit = {},
+        onPause: () -> Unit = {},
+        onRewind: () -> Unit = {},
+        onForward: () -> Unit = {},
+        onVolumeChange: (Float) -> Unit = {},
+        onSpeedChange: (Float) -> Unit = {},
+        onSeek: (Long) -> Unit = {},
+        onSelectPodcast: () -> Unit = {},
+        onSelectLocalFile: () -> Unit = {},
+        onMarkComplete: (() -> Unit)? = null,
+    ) {
         composeRule.setContent {
             TrackCard(
-                label = "Podcast",
+                label = "Track 1",
                 state = state,
                 onPlay = onPlay,
                 onPause = onPause,
@@ -40,7 +49,9 @@ class TrackCardTest {
                 onVolumeChange = onVolumeChange,
                 onSpeedChange = onSpeedChange,
                 onSeek = onSeek,
-                onMarkComplete = onMarkComplete
+                onSelectPodcast = onSelectPodcast,
+                onSelectLocalFile = onSelectLocalFile,
+                onMarkComplete = onMarkComplete,
             )
         }
     }
@@ -48,7 +59,7 @@ class TrackCardTest {
     @Test
     fun showsTrackLabel() {
         setCard(TrackState())
-        composeRule.onNodeWithText("Podcast").assertIsDisplayed()
+        composeRule.onNodeWithText("Track 1").assertIsDisplayed()
     }
 
     @Test
@@ -189,6 +200,38 @@ class TrackCardTest {
     }
 
     @Test
+    fun sourceDropdownButtonIsDisplayed() {
+        setCard(TrackState())
+        composeRule.onNodeWithContentDescription("Select source").assertIsDisplayed()
+    }
+
+    @Test
+    fun sourceDropdownShowsOptionsOnClick() {
+        setCard(TrackState())
+        composeRule.onNodeWithContentDescription("Select source").performClick()
+        composeRule.onNodeWithText("Podcast").assertIsDisplayed()
+        composeRule.onNodeWithText("Local File").assertIsDisplayed()
+    }
+
+    @Test
+    fun clickingPodcastOptionCallsOnSelectPodcast() {
+        var called = false
+        setCard(TrackState(), onSelectPodcast = { called = true })
+        composeRule.onNodeWithContentDescription("Select source").performClick()
+        composeRule.onNodeWithText("Podcast").performClick()
+        assertTrue(called)
+    }
+
+    @Test
+    fun clickingLocalFileOptionCallsOnSelectLocalFile() {
+        var called = false
+        setCard(TrackState(), onSelectLocalFile = { called = true })
+        composeRule.onNodeWithContentDescription("Select source").performClick()
+        composeRule.onNodeWithText("Local File").performClick()
+        assertTrue(called)
+    }
+
+    @Test
     fun markAsDoneButtonHiddenWhenCallbackIsNull() {
         setCard(TrackState(source = AudioSource.RssFeed("https://example.com/ep.mp3")))
         composeRule.onNodeWithContentDescription("Mark as done").assertDoesNotExist()
@@ -201,7 +244,14 @@ class TrackCardTest {
     }
 
     @Test
-    fun markAsDoneButtonShownWhenCallbackProvidedAndSourceLoaded() {
+    fun markAsDoneButtonHiddenWhenSourceIsLocalFile() {
+        val uri = android.net.Uri.parse("content://media/external/audio/1")
+        setCard(TrackState(source = AudioSource.LocalFile(uri)), onMarkComplete = {})
+        composeRule.onNodeWithContentDescription("Mark as done").assertDoesNotExist()
+    }
+
+    @Test
+    fun markAsDoneButtonShownWhenCallbackProvidedAndSourceIsRssFeed() {
         setCard(
             TrackState(source = AudioSource.RssFeed("https://example.com/ep.mp3")),
             onMarkComplete = {}
