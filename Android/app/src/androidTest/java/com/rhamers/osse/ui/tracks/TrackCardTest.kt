@@ -14,6 +14,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.rhamers.osse.model.AudioSource
 import com.rhamers.osse.model.TrackState
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -27,6 +28,7 @@ class TrackCardTest {
 
     private fun setCard(
         state: TrackState,
+        isExtracting: Boolean = false,
         onPlay: () -> Unit = {},
         onPause: () -> Unit = {},
         onRewind: () -> Unit = {},
@@ -36,12 +38,14 @@ class TrackCardTest {
         onSeek: (Long) -> Unit = {},
         onSelectPodcast: () -> Unit = {},
         onSelectLocalFile: () -> Unit = {},
+        onSelectYoutube: () -> Unit = {},
         onMarkComplete: (() -> Unit)? = null,
     ) {
         composeRule.setContent {
             TrackCard(
                 label = "Track 1",
                 state = state,
+                isExtracting = isExtracting,
                 onPlay = onPlay,
                 onPause = onPause,
                 onRewind = onRewind,
@@ -51,6 +55,7 @@ class TrackCardTest {
                 onSeek = onSeek,
                 onSelectPodcast = onSelectPodcast,
                 onSelectLocalFile = onSelectLocalFile,
+                onSelectYoutube = onSelectYoutube,
                 onMarkComplete = onMarkComplete,
             )
         }
@@ -268,5 +273,39 @@ class TrackCardTest {
         )
         composeRule.onNodeWithContentDescription("Mark as done").performClick()
         assertTrue(called)
+    }
+
+    @Test
+    fun sourceDropdownShowsYoutubeOption() {
+        setCard(TrackState())
+        composeRule.onNodeWithContentDescription("Select source").performClick()
+        composeRule.onNodeWithText("YouTube").assertIsDisplayed()
+    }
+
+    @Test
+    fun clickingYoutubeOptionCallsOnSelectYoutube() {
+        var called = false
+        setCard(TrackState(), onSelectYoutube = { called = true })
+        composeRule.onNodeWithContentDescription("Select source").performClick()
+        composeRule.onNodeWithText("YouTube").performClick()
+        assertTrue(called)
+    }
+
+    @Test
+    fun showsExtractingSpinnerWhenExtracting() {
+        setCard(TrackState(), isExtracting = true)
+        composeRule.onNodeWithContentDescription("Extracting").assertIsDisplayed()
+    }
+
+    @Test
+    fun hidesExtractingSpinnerWhenNotExtracting() {
+        setCard(TrackState(), isExtracting = false)
+        composeRule.onNodeWithContentDescription("Extracting").assertDoesNotExist()
+    }
+
+    @Test
+    fun showsYoutubeStreamDisplayString() {
+        setCard(TrackState(source = AudioSource.YoutubeStream("https://stream.example.com/audio")))
+        composeRule.onNodeWithText("YouTube stream").assertIsDisplayed()
     }
 }

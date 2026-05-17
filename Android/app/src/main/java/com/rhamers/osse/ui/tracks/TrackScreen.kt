@@ -63,6 +63,7 @@ import com.rhamers.osse.model.toDisplayString
 import com.rhamers.osse.player.MultiTrackService
 import com.rhamers.osse.player.TrackPlayer
 import com.rhamers.osse.youtube.YoutubeAudio
+import com.rhamers.osse.youtube.YoutubeExtractor
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
@@ -70,6 +71,7 @@ import kotlinx.coroutines.launch
 fun TrackScreen(
     binder: MultiTrackService.LocalBinder?,
     contentPadding: PaddingValues = PaddingValues(),
+    extractor: YoutubeExtractor = YoutubeAudio,
     onSelectPodcast: (TrackId) -> Unit = {},
     onSelectLocalFile: (TrackId) -> Unit = {},
 ) {
@@ -97,6 +99,7 @@ fun TrackScreen(
                         modifier = Modifier.weight(1f).fillMaxHeight(),
                         label = id.displayName,
                         trackPlayer = track,
+                        extractor = extractor,
                         onSelectPodcast = { onSelectPodcast(id) },
                         onSelectLocalFile = { onSelectLocalFile(id) },
                         onMarkComplete = { binder.markEpisodeComplete(id) }
@@ -119,6 +122,7 @@ fun TrackScreen(
                         modifier = Modifier.weight(1f).fillMaxWidth(),
                         label = id.displayName,
                         trackPlayer = track,
+                        extractor = extractor,
                         onSelectPodcast = { onSelectPodcast(id) },
                         onSelectLocalFile = { onSelectLocalFile(id) },
                         onMarkComplete = { binder.markEpisodeComplete(id) }
@@ -134,6 +138,7 @@ private fun TrackPlayerCard(
     modifier: Modifier,
     label: String,
     trackPlayer: TrackPlayer,
+    extractor: YoutubeExtractor,
     onSelectPodcast: () -> Unit,
     onSelectLocalFile: () -> Unit,
     onMarkComplete: () -> Unit,
@@ -195,7 +200,7 @@ private fun TrackPlayerCard(
                             extracting = true
                             youtubeError = null
                             try {
-                                val streamUrl = YoutubeAudio.extractAudioUrl(youtubeUrlInput.trim())
+                                val streamUrl = extractor.extractAudioUrl(youtubeUrlInput.trim())
                                 trackPlayer.setSource(AudioSource.YoutubeStream(streamUrl))
                                 showYoutubeDialog = false
                                 youtubeUrlInput = ""

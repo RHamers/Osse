@@ -2,7 +2,6 @@ package com.rhamers.osse.model
 
 import android.net.Uri
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -56,11 +55,9 @@ class AudioSourceTest {
     }
 
     @Test
-    fun toDisplayString_youtubeStreamContainsYoutubePrefix() {
+    fun toDisplayString_youtubeStreamReturnsYoutubeStream() {
         val url = "https://youtube.com/watch?v=abc123"
-        val result = AudioSource.YoutubeStream(url).toDisplayString()
-        assertTrue(result.startsWith("YouTube:"))
-        assertTrue(result.contains(url))
+        assertEquals("YouTube stream", AudioSource.YoutubeStream(url).toDisplayString())
     }
 
     @Test
