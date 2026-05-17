@@ -10,10 +10,19 @@ import (
 	youtube "github.com/kkdai/youtube/v2"
 )
 
+type youtubeClient interface {
+	GetVideo(url string) (*youtube.Video, error)
+	GetStreamURL(video *youtube.Video, format *youtube.Format) (string, error)
+	GetStream(video *youtube.Video, format *youtube.Format) (io.ReadCloser, int64, error)
+}
+
 // ExtractAudioURL returns a direct streamable audio URL for a YouTube video.
 // The URL is time-limited by YouTube; pass it to ExoPlayer immediately.
 func ExtractAudioURL(videoURL string) (string, error) {
-	client := youtube.Client{}
+	return extractAudioURL(&youtube.Client{}, videoURL)
+}
+
+func extractAudioURL(client youtubeClient, videoURL string) (string, error) {
 	video, err := client.GetVideo(videoURL)
 	if err != nil {
 		return "", fmt.Errorf("get video: %w", err)
@@ -48,7 +57,10 @@ func ExtractAudioURL(videoURL string) (string, error) {
 // The file format is whatever YouTube serves (typically webm or m4a).
 // Pass the file through ffmpeg-kit on the Android side to convert to MP3.
 func DownloadAudio(videoURL string, outputPath string) error {
-	client := youtube.Client{}
+	return downloadAudio(&youtube.Client{}, videoURL, outputPath)
+}
+
+func downloadAudio(client youtubeClient, videoURL string, outputPath string) error {
 	video, err := client.GetVideo(videoURL)
 	if err != nil {
 		return fmt.Errorf("get video: %w", err)
