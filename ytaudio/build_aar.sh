@@ -12,7 +12,7 @@ export ANDROID_HOME ANDROID_NDK_HOME
 export PATH="$GOPATH/bin:$JAVAC:$PATH"
 
 "$GOPATH/bin/gomobile" bind \
-    -target=android/arm64 \
+    -target=android/arm64,android/amd64 \
     -androidapi 21 \
     -ldflags="-extldflags '-Wl,-z,max-page-size=16384'" \
     -o ../Android/app/libs/ytaudio.aar \

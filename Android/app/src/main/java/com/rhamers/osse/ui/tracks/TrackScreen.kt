@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -17,11 +18,13 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Forward30
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.TaskAlt
 import androidx.compose.material.icons.filled.VolumeDown
 import androidx.compose.material.icons.filled.VolumeUp
@@ -31,6 +34,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -63,6 +67,7 @@ import com.rhamers.osse.model.displayName
 import com.rhamers.osse.model.toDisplayString
 import com.rhamers.osse.player.MultiTrackService
 import com.rhamers.osse.player.TrackPlayer
+import com.rhamers.osse.youtube.VideoSearchResult
 import com.rhamers.osse.youtube.YoutubeAudio
 import com.rhamers.osse.youtube.YoutubeExtractor
 import java.io.File
@@ -151,11 +156,50 @@ private fun TrackPlayerCard(
     val scope = rememberCoroutineScope()
 
     var showYoutubeDialog by remember { mutableStateOf(false) }
-    var youtubeUrlInput by remember { mutableStateOf("") }
+    var youtubeInput by remember { mutableStateOf("") }
     var youtubeError by remember { mutableStateOf<String?>(null) }
     var extracting by remember { mutableStateOf(false) }
     var downloading by remember { mutableStateOf(false) }
-    val busy = extracting || downloading
+    var searching by remember { mutableStateOf(false) }
+    var searchResults by remember { mutableStateOf<List<VideoSearchResult>>(emptyList()) }
+    val busy = extracting || downloading || searching
+    val isUrl = remember(youtubeInput) { isYoutubeUrl(youtubeInput) }
+
+    fun dismiss() { showYoutubeDialog = false; youtubeInput = ""; youtubeError = null; searchResults = emptyList() }
+
+    fun doPlay(videoUrl: String) {
+        scope.launch {
+            extracting = true
+            youtubeError = null
+            try {
+                val streamUrl = extractor.extractAudioUrl(videoUrl)
+                trackPlayer.setSource(AudioSource.YoutubeStream(streamUrl))
+                dismiss()
+            } catch (e: Exception) {
+                youtubeError = e.message ?: "Failed to extract audio URL"
+            } finally {
+                extracting = false
+            }
+        }
+    }
+
+    fun doDownload(videoUrl: String, videoId: String) {
+        scope.launch {
+            downloading = true
+            youtubeError = null
+            try {
+                val dir = context.getExternalFilesDir("youtube") ?: context.filesDir
+                val outputPath = File(dir, "$videoId.webm").absolutePath
+                extractor.downloadAudio(videoUrl, outputPath)
+                trackPlayer.setSource(AudioSource.YoutubeDownloaded(outputPath))
+                dismiss()
+            } catch (e: Exception) {
+                youtubeError = e.message ?: "Download failed"
+            } finally {
+                downloading = false
+            }
+        }
+    }
 
     TrackCard(
         modifier = modifier,
@@ -177,80 +221,94 @@ private fun TrackPlayerCard(
 
     if (showYoutubeDialog) {
         AlertDialog(
-            onDismissRequest = { if (!busy) { showYoutubeDialog = false; youtubeError = null } },
-            title = { Text("YouTube URL") },
+            onDismissRequest = { if (!busy) dismiss() },
+            title = { Text("YouTube") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
-                        value = youtubeUrlInput,
-                        onValueChange = { youtubeUrlInput = it; youtubeError = null },
-                        label = { Text("https://youtube.com/watch?v=...") },
+                        value = youtubeInput,
+                        onValueChange = { youtubeInput = it; youtubeError = null; searchResults = emptyList() },
+                        label = { Text("Search or paste URL") },
                         singleLine = true,
                         enabled = !busy,
+                        trailingIcon = {
+                            if (!isUrl) {
+                                IconButton(
+                                    onClick = {
+                                        scope.launch {
+                                            searching = true
+                                            youtubeError = null
+                                            try {
+                                                searchResults = extractor.searchVideos(youtubeInput.trim())
+                                            } catch (e: Exception) {
+                                                youtubeError = e.message ?: "Search failed"
+                                            } finally {
+                                                searching = false
+                                            }
+                                        }
+                                    },
+                                    enabled = youtubeInput.isNotBlank() && !busy,
+                                ) {
+                                    Icon(Icons.Default.Search, contentDescription = "Search")
+                                }
+                            }
+                        },
                         modifier = Modifier.fillMaxWidth()
                     )
                     if (youtubeError != null) {
-                        Text(youtubeError!!, color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodySmall)
+                        Text(
+                            youtubeError!!,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
                     }
                     if (busy) {
                         CircularProgressIndicator(modifier = Modifier.size(24.dp))
                     }
+                    if (searchResults.isNotEmpty()) {
+                        Column(
+                            modifier = Modifier
+                                .heightIn(max = 280.dp)
+                                .verticalScroll(rememberScrollState())
+                        ) {
+                            searchResults.forEach { result ->
+                                SearchResultRow(
+                                    result = result,
+                                    enabled = !busy,
+                                    onPlay = {
+                                        doPlay("https://www.youtube.com/watch?v=${result.id}")
+                                    },
+                                    onDownload = {
+                                        doDownload("https://www.youtube.com/watch?v=${result.id}", result.id)
+                                    },
+                                )
+                                HorizontalDivider()
+                            }
+                        }
+                    }
                 }
             },
             confirmButton = {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(
-                        enabled = youtubeUrlInput.isNotBlank() && !busy,
-                        onClick = {
-                            scope.launch {
-                                downloading = true
-                                youtubeError = null
-                                try {
-                                    val url = youtubeUrlInput.trim()
-                                    val videoId = Regex("[?&]v=([^&]+)").find(url)
-                                        ?.groupValues?.get(1) ?: UUID.randomUUID().toString()
-                                    val dir = context.getExternalFilesDir("youtube") ?: context.filesDir
-                                    val outputPath = File(dir, "$videoId.webm").absolutePath
-                                    extractor.downloadAudio(url, outputPath)
-                                    trackPlayer.setSource(AudioSource.YoutubeDownloaded(outputPath))
-                                    showYoutubeDialog = false
-                                    youtubeUrlInput = ""
-                                } catch (e: Exception) {
-                                    youtubeError = e.message ?: "Download failed"
-                                } finally {
-                                    downloading = false
-                                }
-                            }
+                if (isUrl) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        val urlId = remember(youtubeInput) {
+                            Regex("[?&]v=([^&]+)").find(youtubeInput)?.groupValues?.get(1)
+                                ?: UUID.randomUUID().toString()
                         }
-                    ) { Text("Download") }
-                    TextButton(
-                        enabled = youtubeUrlInput.isNotBlank() && !busy,
-                        onClick = {
-                            scope.launch {
-                                extracting = true
-                                youtubeError = null
-                                try {
-                                    val streamUrl = extractor.extractAudioUrl(youtubeUrlInput.trim())
-                                    trackPlayer.setSource(AudioSource.YoutubeStream(streamUrl))
-                                    showYoutubeDialog = false
-                                    youtubeUrlInput = ""
-                                } catch (e: Exception) {
-                                    youtubeError = e.message ?: "Failed to extract audio URL"
-                                } finally {
-                                    extracting = false
-                                }
-                            }
-                        }
-                    ) { Text("Play") }
+                        TextButton(
+                            enabled = !busy,
+                            onClick = { doDownload(youtubeInput.trim(), urlId) },
+                        ) { Text("Download") }
+                        TextButton(
+                            enabled = !busy,
+                            onClick = { doPlay(youtubeInput.trim()) },
+                        ) { Text("Play") }
+                    }
                 }
             },
             dismissButton = {
-                TextButton(
-                    enabled = !busy,
-                    onClick = { showYoutubeDialog = false; youtubeError = null }
-                ) { Text("Cancel") }
-            }
+                TextButton(enabled = !busy, onClick = ::dismiss) { Text("Cancel") }
+            },
         )
     }
 }
@@ -433,6 +491,52 @@ fun TrackCard(
             }
         }
     }
+}
+
+@Composable
+private fun SearchResultRow(
+    result: VideoSearchResult,
+    enabled: Boolean,
+    onPlay: () -> Unit,
+    onDownload: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f).padding(vertical = 4.dp)) {
+            Text(
+                result.title,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                buildString {
+                    append(result.channel)
+                    if (result.durationSecs > 0) append(" • ${formatDuration(result.durationSecs)}")
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        IconButton(onClick = onPlay, enabled = enabled) {
+            Icon(Icons.Default.PlayArrow, contentDescription = "Play ${result.title}")
+        }
+        IconButton(onClick = onDownload, enabled = enabled) {
+            Icon(Icons.Default.Download, contentDescription = "Download ${result.title}")
+        }
+    }
+}
+
+private fun isYoutubeUrl(input: String): Boolean =
+    input.contains("youtube.com") || input.contains("youtu.be")
+
+private fun formatDuration(secs: Long): String {
+    val h = secs / 3600
+    val m = (secs % 3600) / 60
+    val s = secs % 60
+    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
 }
 
 private fun formatTime(ms: Long): String {

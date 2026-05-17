@@ -44,6 +44,12 @@ android {
                 "proguard-rules.pro"
             )
         }
+        debug {
+            // x86_64 emulator support for development (release stays arm64-only per ADR-006)
+            ndk {
+                abiFilters += "x86_64"
+            }
+        }
     }
 
     compileOptions {

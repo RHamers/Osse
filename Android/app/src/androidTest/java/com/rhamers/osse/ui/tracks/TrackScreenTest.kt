@@ -23,6 +23,7 @@ import com.rhamers.osse.model.TrackId
 import com.rhamers.osse.player.MultiTrackService
 import com.rhamers.osse.ui.theme.OsseTheme
 import com.rhamers.osse.youtube.FakeYoutubeExtractor
+import com.rhamers.osse.youtube.VideoSearchResult
 import org.junit.AfterClass
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -147,114 +148,90 @@ class TrackScreenTest {
         composeRule.onNodeWithText("No tracks").assertDoesNotExist()
     }
 
-    @Test
-    fun clickingYoutubeOptionShowsDialog() {
-        composeRule.setContent {
-            OsseTheme { TrackScreen(binder = binder) }
-        }
+    private fun openYoutubeDialog() {
         composeRule.onAllNodes(hasContentDescription("Select source"))[0].performClick()
         composeRule.onNodeWithText("YouTube").performClick()
-        composeRule.onNodeWithText("YouTube URL").assertIsDisplayed()
+    }
+
+    private fun typeIntoYoutubeField(text: String) {
+        composeRule.onNodeWithText("Search or paste URL").performTextInput(text)
     }
 
     @Test
-    fun youtubeDialogHasPlayAndCancelButtons() {
-        composeRule.setContent {
-            OsseTheme { TrackScreen(binder = binder) }
-        }
-        composeRule.onAllNodes(hasContentDescription("Select source"))[0].performClick()
-        composeRule.onNodeWithText("YouTube").performClick()
-        composeRule.onNodeWithText("Play").assertIsDisplayed()
+    fun clickingYoutubeOptionShowsDialog() {
+        composeRule.setContent { OsseTheme { TrackScreen(binder = binder) } }
+        openYoutubeDialog()
+        composeRule.onNodeWithText("YouTube").assertIsDisplayed()
+        composeRule.onNodeWithText("Search or paste URL").assertIsDisplayed()
+    }
+
+    @Test
+    fun youtubeDialogShowsCancelButton() {
+        composeRule.setContent { OsseTheme { TrackScreen(binder = binder) } }
+        openYoutubeDialog()
         composeRule.onNodeWithText("Cancel").assertIsDisplayed()
     }
 
     @Test
-    fun youtubeDialogPlayButtonDisabledWhenUrlEmpty() {
-        composeRule.setContent {
-            OsseTheme { TrackScreen(binder = binder) }
-        }
-        composeRule.onAllNodes(hasContentDescription("Select source"))[0].performClick()
-        composeRule.onNodeWithText("YouTube").performClick()
-        composeRule.onNodeWithText("Play").assertIsNotEnabled()
+    fun youtubeSearchButtonDisabledWhenInputEmpty() {
+        composeRule.setContent { OsseTheme { TrackScreen(binder = binder) } }
+        openYoutubeDialog()
+        composeRule.onNodeWithContentDescription("Search").assertIsNotEnabled()
     }
 
     @Test
     fun youtubeDialogCancelDismissesDialog() {
-        composeRule.setContent {
-            OsseTheme { TrackScreen(binder = binder) }
-        }
-        composeRule.onAllNodes(hasContentDescription("Select source"))[0].performClick()
-        composeRule.onNodeWithText("YouTube").performClick()
+        composeRule.setContent { OsseTheme { TrackScreen(binder = binder) } }
+        openYoutubeDialog()
         composeRule.onNodeWithText("Cancel").performClick()
-        composeRule.onNodeWithText("YouTube URL").assertDoesNotExist()
+        composeRule.onNodeWithText("Search or paste URL").assertDoesNotExist()
     }
 
     @Test
-    fun youtubeDialogPlayButtonEnabledAfterTypingUrl() {
-        composeRule.setContent {
-            OsseTheme { TrackScreen(binder = binder) }
-        }
-        composeRule.onAllNodes(hasContentDescription("Select source"))[0].performClick()
-        composeRule.onNodeWithText("YouTube").performClick()
-        composeRule.onNodeWithText("https://youtube.com/watch?v=...").performTextInput("https://youtube.com/watch?v=abc")
-        composeRule.onNodeWithText("Play").assertIsEnabled()
+    fun youtubeUrlInputShowsPlayAndDownloadButtons() {
+        composeRule.setContent { OsseTheme { TrackScreen(binder = binder) } }
+        openYoutubeDialog()
+        typeIntoYoutubeField("https://youtube.com/watch?v=abc")
+        composeRule.onNodeWithText("Play").assertIsDisplayed()
+        composeRule.onNodeWithText("Download").assertIsDisplayed()
     }
 
     @Test
     fun youtubeExtractionSuccessClosesDialogAndSetsSource() {
-        val fake = FakeYoutubeExtractor(Result.success("https://fake-stream.example.com/audio"))
-        composeRule.setContent {
-            OsseTheme { TrackScreen(binder = binder, extractor = fake) }
-        }
-        composeRule.onAllNodes(hasContentDescription("Select source"))[0].performClick()
-        composeRule.onNodeWithText("YouTube").performClick()
-        composeRule.onNodeWithText("https://youtube.com/watch?v=...").performTextInput("https://youtube.com/watch?v=abc")
+        val fake = FakeYoutubeExtractor(streamResult = Result.success("https://fake-stream.example.com/audio"))
+        composeRule.setContent { OsseTheme { TrackScreen(binder = binder, extractor = fake) } }
+        openYoutubeDialog()
+        typeIntoYoutubeField("https://youtube.com/watch?v=abc")
         composeRule.onNodeWithText("Play").performClick()
         composeRule.waitUntil(timeoutMillis = 5_000) {
-            composeRule.onAllNodes(hasText("YouTube URL")).fetchSemanticsNodes().isEmpty()
+            composeRule.onAllNodes(hasText("Search or paste URL")).fetchSemanticsNodes().isEmpty()
         }
         composeRule.onNodeWithText("YouTube stream").assertIsDisplayed()
     }
 
     @Test
     fun youtubeExtractionFailureShowsError() {
-        val fake = FakeYoutubeExtractor(Result.failure(RuntimeException("cipher error")))
-        composeRule.setContent {
-            OsseTheme { TrackScreen(binder = binder, extractor = fake) }
-        }
-        composeRule.onAllNodes(hasContentDescription("Select source"))[0].performClick()
-        composeRule.onNodeWithText("YouTube").performClick()
-        composeRule.onNodeWithText("https://youtube.com/watch?v=...").performTextInput("https://youtube.com/watch?v=abc")
+        val fake = FakeYoutubeExtractor(streamResult = Result.failure(RuntimeException("cipher error")))
+        composeRule.setContent { OsseTheme { TrackScreen(binder = binder, extractor = fake) } }
+        openYoutubeDialog()
+        typeIntoYoutubeField("https://youtube.com/watch?v=abc")
         composeRule.onNodeWithText("Play").performClick()
         composeRule.waitUntil(timeoutMillis = 5_000) {
             composeRule.onAllNodes(hasText("cipher error")).fetchSemanticsNodes().isNotEmpty()
         }
         composeRule.onNodeWithText("cipher error").assertIsDisplayed()
-        composeRule.onNodeWithText("YouTube URL").assertIsDisplayed()
-    }
-
-    @Test
-    fun youtubeDialogHasDownloadButton() {
-        composeRule.setContent {
-            OsseTheme { TrackScreen(binder = binder) }
-        }
-        composeRule.onAllNodes(hasContentDescription("Select source"))[0].performClick()
-        composeRule.onNodeWithText("YouTube").performClick()
-        composeRule.onNodeWithText("Download").assertIsDisplayed()
+        composeRule.onNodeWithText("YouTube").assertIsDisplayed()
     }
 
     @Test
     fun youtubeDownloadSuccessClosesDialogAndSetsSource() {
         val fake = FakeYoutubeExtractor(downloadResult = Result.success(Unit))
-        composeRule.setContent {
-            OsseTheme { TrackScreen(binder = binder, extractor = fake) }
-        }
-        composeRule.onAllNodes(hasContentDescription("Select source"))[0].performClick()
-        composeRule.onNodeWithText("YouTube").performClick()
-        composeRule.onNodeWithText("https://youtube.com/watch?v=...").performTextInput("https://youtube.com/watch?v=abc")
+        composeRule.setContent { OsseTheme { TrackScreen(binder = binder, extractor = fake) } }
+        openYoutubeDialog()
+        typeIntoYoutubeField("https://youtube.com/watch?v=abc")
         composeRule.onNodeWithText("Download").performClick()
         composeRule.waitUntil(timeoutMillis = 5_000) {
-            composeRule.onAllNodes(hasText("YouTube URL")).fetchSemanticsNodes().isEmpty()
+            composeRule.onAllNodes(hasText("Search or paste URL")).fetchSemanticsNodes().isEmpty()
         }
         composeRule.onNodeWithText("abc.webm").assertIsDisplayed()
     }
@@ -262,17 +239,92 @@ class TrackScreenTest {
     @Test
     fun youtubeDownloadFailureShowsError() {
         val fake = FakeYoutubeExtractor(downloadResult = Result.failure(RuntimeException("disk full")))
-        composeRule.setContent {
-            OsseTheme { TrackScreen(binder = binder, extractor = fake) }
-        }
-        composeRule.onAllNodes(hasContentDescription("Select source"))[0].performClick()
-        composeRule.onNodeWithText("YouTube").performClick()
-        composeRule.onNodeWithText("https://youtube.com/watch?v=...").performTextInput("https://youtube.com/watch?v=abc")
+        composeRule.setContent { OsseTheme { TrackScreen(binder = binder, extractor = fake) } }
+        openYoutubeDialog()
+        typeIntoYoutubeField("https://youtube.com/watch?v=abc")
         composeRule.onNodeWithText("Download").performClick()
         composeRule.waitUntil(timeoutMillis = 5_000) {
             composeRule.onAllNodes(hasText("disk full")).fetchSemanticsNodes().isNotEmpty()
         }
         composeRule.onNodeWithText("disk full").assertIsDisplayed()
-        composeRule.onNodeWithText("YouTube URL").assertIsDisplayed()
+        composeRule.onNodeWithText("YouTube").assertIsDisplayed()
+    }
+
+    @Test
+    fun youtubeSearchShowsResults() {
+        val fake = FakeYoutubeExtractor(
+            searchResult = Result.success(listOf(
+                VideoSearchResult("vid1", "Lofi Beats", "Lofi Girl", 225),
+                VideoSearchResult("vid2", "Piano Music", "Relaxing", 3730),
+            ))
+        )
+        composeRule.setContent { OsseTheme { TrackScreen(binder = binder, extractor = fake) } }
+        openYoutubeDialog()
+        typeIntoYoutubeField("lofi")
+        composeRule.onNodeWithContentDescription("Search").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodes(hasText("Lofi Beats")).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithText("Lofi Beats").assertIsDisplayed()
+        composeRule.onNodeWithText("Piano Music").assertIsDisplayed()
+    }
+
+    @Test
+    fun youtubeSearchResultPlayClosesDialogAndSetsStream() {
+        val fake = FakeYoutubeExtractor(
+            streamResult = Result.success("https://fake-stream.example.com/audio"),
+            searchResult = Result.success(listOf(
+                VideoSearchResult("vid1", "Lofi Beats", "Lofi Girl", 225),
+            ))
+        )
+        composeRule.setContent { OsseTheme { TrackScreen(binder = binder, extractor = fake) } }
+        openYoutubeDialog()
+        typeIntoYoutubeField("lofi")
+        composeRule.onNodeWithContentDescription("Search").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodes(hasText("Lofi Beats")).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithContentDescription("Play Lofi Beats").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodes(hasText("Search or paste URL")).fetchSemanticsNodes().isEmpty()
+        }
+        composeRule.onNodeWithText("YouTube stream").assertIsDisplayed()
+    }
+
+    @Test
+    fun youtubeSearchResultDownloadClosesDialogAndSetsSource() {
+        val fake = FakeYoutubeExtractor(
+            downloadResult = Result.success(Unit),
+            searchResult = Result.success(listOf(
+                VideoSearchResult("vid1", "Lofi Beats", "Lofi Girl", 225),
+            ))
+        )
+        composeRule.setContent { OsseTheme { TrackScreen(binder = binder, extractor = fake) } }
+        openYoutubeDialog()
+        typeIntoYoutubeField("lofi")
+        composeRule.onNodeWithContentDescription("Search").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodes(hasText("Lofi Beats")).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithContentDescription("Download Lofi Beats").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodes(hasText("Search or paste URL")).fetchSemanticsNodes().isEmpty()
+        }
+        composeRule.onNodeWithText("vid1.webm").assertIsDisplayed()
+    }
+
+    @Test
+    fun youtubeSearchFailureShowsError() {
+        val fake = FakeYoutubeExtractor(
+            searchResult = Result.failure(RuntimeException("network error"))
+        )
+        composeRule.setContent { OsseTheme { TrackScreen(binder = binder, extractor = fake) } }
+        openYoutubeDialog()
+        typeIntoYoutubeField("lofi")
+        composeRule.onNodeWithContentDescription("Search").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodes(hasText("network error")).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithText("network error").assertIsDisplayed()
     }
 }
