@@ -232,4 +232,47 @@ class TrackScreenTest {
         composeRule.onNodeWithText("cipher error").assertIsDisplayed()
         composeRule.onNodeWithText("YouTube URL").assertIsDisplayed()
     }
+
+    @Test
+    fun youtubeDialogHasDownloadButton() {
+        composeRule.setContent {
+            OsseTheme { TrackScreen(binder = binder) }
+        }
+        composeRule.onAllNodes(hasContentDescription("Select source"))[0].performClick()
+        composeRule.onNodeWithText("YouTube").performClick()
+        composeRule.onNodeWithText("Download").assertIsDisplayed()
+    }
+
+    @Test
+    fun youtubeDownloadSuccessClosesDialogAndSetsSource() {
+        val fake = FakeYoutubeExtractor(downloadResult = Result.success(Unit))
+        composeRule.setContent {
+            OsseTheme { TrackScreen(binder = binder, extractor = fake) }
+        }
+        composeRule.onAllNodes(hasContentDescription("Select source"))[0].performClick()
+        composeRule.onNodeWithText("YouTube").performClick()
+        composeRule.onNodeWithText("https://youtube.com/watch?v=...").performTextInput("https://youtube.com/watch?v=abc")
+        composeRule.onNodeWithText("Download").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodes(hasText("YouTube URL")).fetchSemanticsNodes().isEmpty()
+        }
+        composeRule.onNodeWithText("abc.webm").assertIsDisplayed()
+    }
+
+    @Test
+    fun youtubeDownloadFailureShowsError() {
+        val fake = FakeYoutubeExtractor(downloadResult = Result.failure(RuntimeException("disk full")))
+        composeRule.setContent {
+            OsseTheme { TrackScreen(binder = binder, extractor = fake) }
+        }
+        composeRule.onAllNodes(hasContentDescription("Select source"))[0].performClick()
+        composeRule.onNodeWithText("YouTube").performClick()
+        composeRule.onNodeWithText("https://youtube.com/watch?v=...").performTextInput("https://youtube.com/watch?v=abc")
+        composeRule.onNodeWithText("Download").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodes(hasText("disk full")).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithText("disk full").assertIsDisplayed()
+        composeRule.onNodeWithText("YouTube URL").assertIsDisplayed()
+    }
 }

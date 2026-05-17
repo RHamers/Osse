@@ -50,6 +50,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTag
@@ -64,6 +65,8 @@ import com.rhamers.osse.player.MultiTrackService
 import com.rhamers.osse.player.TrackPlayer
 import com.rhamers.osse.youtube.YoutubeAudio
 import com.rhamers.osse.youtube.YoutubeExtractor
+import java.io.File
+import java.util.UUID
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
@@ -144,12 +147,15 @@ private fun TrackPlayerCard(
     onMarkComplete: () -> Unit,
 ) {
     val state by trackPlayer.state.collectAsState()
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
     var showYoutubeDialog by remember { mutableStateOf(false) }
     var youtubeUrlInput by remember { mutableStateOf("") }
     var youtubeError by remember { mutableStateOf<String?>(null) }
     var extracting by remember { mutableStateOf(false) }
+    var downloading by remember { mutableStateOf(false) }
+    val busy = extracting || downloading
 
     TrackCard(
         modifier = modifier,
@@ -171,7 +177,7 @@ private fun TrackPlayerCard(
 
     if (showYoutubeDialog) {
         AlertDialog(
-            onDismissRequest = { if (!extracting) { showYoutubeDialog = false; youtubeError = null } },
+            onDismissRequest = { if (!busy) { showYoutubeDialog = false; youtubeError = null } },
             title = { Text("YouTube URL") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -180,42 +186,68 @@ private fun TrackPlayerCard(
                         onValueChange = { youtubeUrlInput = it; youtubeError = null },
                         label = { Text("https://youtube.com/watch?v=...") },
                         singleLine = true,
-                        enabled = !extracting,
+                        enabled = !busy,
                         modifier = Modifier.fillMaxWidth()
                     )
                     if (youtubeError != null) {
                         Text(youtubeError!!, color = MaterialTheme.colorScheme.error,
                             style = MaterialTheme.typography.bodySmall)
                     }
-                    if (extracting) {
+                    if (busy) {
                         CircularProgressIndicator(modifier = Modifier.size(24.dp))
                     }
                 }
             },
             confirmButton = {
-                TextButton(
-                    enabled = youtubeUrlInput.isNotBlank() && !extracting,
-                    onClick = {
-                        scope.launch {
-                            extracting = true
-                            youtubeError = null
-                            try {
-                                val streamUrl = extractor.extractAudioUrl(youtubeUrlInput.trim())
-                                trackPlayer.setSource(AudioSource.YoutubeStream(streamUrl))
-                                showYoutubeDialog = false
-                                youtubeUrlInput = ""
-                            } catch (e: Exception) {
-                                youtubeError = e.message ?: "Failed to extract audio URL"
-                            } finally {
-                                extracting = false
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(
+                        enabled = youtubeUrlInput.isNotBlank() && !busy,
+                        onClick = {
+                            scope.launch {
+                                downloading = true
+                                youtubeError = null
+                                try {
+                                    val url = youtubeUrlInput.trim()
+                                    val videoId = Regex("[?&]v=([^&]+)").find(url)
+                                        ?.groupValues?.get(1) ?: UUID.randomUUID().toString()
+                                    val dir = context.getExternalFilesDir("youtube") ?: context.filesDir
+                                    val outputPath = File(dir, "$videoId.webm").absolutePath
+                                    extractor.downloadAudio(url, outputPath)
+                                    trackPlayer.setSource(AudioSource.YoutubeDownloaded(outputPath))
+                                    showYoutubeDialog = false
+                                    youtubeUrlInput = ""
+                                } catch (e: Exception) {
+                                    youtubeError = e.message ?: "Download failed"
+                                } finally {
+                                    downloading = false
+                                }
                             }
                         }
-                    }
-                ) { Text("Play") }
+                    ) { Text("Download") }
+                    TextButton(
+                        enabled = youtubeUrlInput.isNotBlank() && !busy,
+                        onClick = {
+                            scope.launch {
+                                extracting = true
+                                youtubeError = null
+                                try {
+                                    val streamUrl = extractor.extractAudioUrl(youtubeUrlInput.trim())
+                                    trackPlayer.setSource(AudioSource.YoutubeStream(streamUrl))
+                                    showYoutubeDialog = false
+                                    youtubeUrlInput = ""
+                                } catch (e: Exception) {
+                                    youtubeError = e.message ?: "Failed to extract audio URL"
+                                } finally {
+                                    extracting = false
+                                }
+                            }
+                        }
+                    ) { Text("Play") }
+                }
             },
             dismissButton = {
                 TextButton(
-                    enabled = !extracting,
+                    enabled = !busy,
                     onClick = { showYoutubeDialog = false; youtubeError = null }
                 ) { Text("Cancel") }
             }
