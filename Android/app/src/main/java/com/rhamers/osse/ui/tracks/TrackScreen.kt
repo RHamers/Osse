@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.TaskAlt
 import androidx.compose.material.icons.filled.VolumeDown
 import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -33,8 +34,10 @@ import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -42,6 +45,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -58,7 +62,9 @@ import com.rhamers.osse.model.displayName
 import com.rhamers.osse.model.toDisplayString
 import com.rhamers.osse.player.MultiTrackService
 import com.rhamers.osse.player.TrackPlayer
+import com.rhamers.osse.youtube.YoutubeAudio
 import kotlin.math.roundToInt
+import kotlinx.coroutines.launch
 
 @Composable
 fun TrackScreen(
@@ -133,10 +139,18 @@ private fun TrackPlayerCard(
     onMarkComplete: () -> Unit,
 ) {
     val state by trackPlayer.state.collectAsState()
+    val scope = rememberCoroutineScope()
+
+    var showYoutubeDialog by remember { mutableStateOf(false) }
+    var youtubeUrlInput by remember { mutableStateOf("") }
+    var youtubeError by remember { mutableStateOf<String?>(null) }
+    var extracting by remember { mutableStateOf(false) }
+
     TrackCard(
         modifier = modifier,
         label = label,
         state = state,
+        isExtracting = extracting,
         onPlay = trackPlayer::play,
         onPause = trackPlayer::pause,
         onRewind = trackPlayer::rewind,
@@ -146,8 +160,62 @@ private fun TrackPlayerCard(
         onSeek = trackPlayer::seekTo,
         onSelectPodcast = onSelectPodcast,
         onSelectLocalFile = onSelectLocalFile,
+        onSelectYoutube = { showYoutubeDialog = true },
         onMarkComplete = onMarkComplete
     )
+
+    if (showYoutubeDialog) {
+        AlertDialog(
+            onDismissRequest = { if (!extracting) { showYoutubeDialog = false; youtubeError = null } },
+            title = { Text("YouTube URL") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = youtubeUrlInput,
+                        onValueChange = { youtubeUrlInput = it; youtubeError = null },
+                        label = { Text("https://youtube.com/watch?v=...") },
+                        singleLine = true,
+                        enabled = !extracting,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (youtubeError != null) {
+                        Text(youtubeError!!, color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall)
+                    }
+                    if (extracting) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = youtubeUrlInput.isNotBlank() && !extracting,
+                    onClick = {
+                        scope.launch {
+                            extracting = true
+                            youtubeError = null
+                            try {
+                                val streamUrl = YoutubeAudio.extractAudioUrl(youtubeUrlInput.trim())
+                                trackPlayer.setSource(AudioSource.YoutubeStream(streamUrl))
+                                showYoutubeDialog = false
+                                youtubeUrlInput = ""
+                            } catch (e: Exception) {
+                                youtubeError = e.message ?: "Failed to extract audio URL"
+                            } finally {
+                                extracting = false
+                            }
+                        }
+                    }
+                ) { Text("Play") }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !extracting,
+                    onClick = { showYoutubeDialog = false; youtubeError = null }
+                ) { Text("Cancel") }
+            }
+        )
+    }
 }
 
 @Composable
@@ -155,6 +223,7 @@ fun TrackCard(
     modifier: Modifier = Modifier,
     label: String,
     state: TrackState,
+    isExtracting: Boolean = false,
     onPlay: () -> Unit,
     onPause: () -> Unit,
     onRewind: () -> Unit,
@@ -164,6 +233,7 @@ fun TrackCard(
     onSeek: (Long) -> Unit,
     onSelectPodcast: () -> Unit = {},
     onSelectLocalFile: () -> Unit = {},
+    onSelectYoutube: () -> Unit = {},
     onMarkComplete: (() -> Unit)? = null,
 ) {
     Card(modifier = modifier) {
@@ -182,11 +252,11 @@ fun TrackCard(
             ) {
                 Text(label, style = MaterialTheme.typography.titleLarge)
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (state.isLoading) {
+                    if (state.isLoading || isExtracting) {
                         CircularProgressIndicator(
                             modifier = Modifier
                                 .size(20.dp)
-                                .semantics { contentDescription = "Buffering" },
+                                .semantics { contentDescription = if (isExtracting) "Extracting" else "Buffering" },
                             strokeWidth = 2.dp
                         )
                     }
@@ -206,6 +276,10 @@ fun TrackCard(
                             DropdownMenuItem(
                                 text = { Text("Local File") },
                                 onClick = { menuExpanded = false; onSelectLocalFile() }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("YouTube") },
+                                onClick = { menuExpanded = false; onSelectYoutube() }
                             )
                         }
                     }

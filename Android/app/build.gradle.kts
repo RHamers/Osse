@@ -119,8 +119,8 @@ dependencies {
     // Drag-to-reorder
     implementation(libs.reorderable)
 
-    // ytaudio gomobile AAR — uncomment once built and placed in app/libs/ (see ADR-002)
-    // implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar", "*.jar"))))
+    // ytaudio gomobile AAR (see ADR-002)
+    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar", "*.jar"))))
 
     // Test
     testImplementation(libs.junit)
