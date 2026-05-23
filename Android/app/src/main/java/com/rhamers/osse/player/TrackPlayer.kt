@@ -1,5 +1,7 @@
 package com.rhamers.osse.player
 
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
@@ -21,7 +23,12 @@ import kotlinx.coroutines.launch
 
 class TrackPlayer(context: Context, val trackId: TrackId) {
 
-    internal val player: ExoPlayer = ExoPlayer.Builder(context).build()
+    internal val player: ExoPlayer = ExoPlayer.Builder(context)
+        .setAudioAttributes(
+            AudioAttributes.Builder().setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(),
+            /* handleAudioFocus= */ false
+        )
+        .build()
 
     var onEnded: (() -> Unit)? = null
 

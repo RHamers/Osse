@@ -10,6 +10,7 @@ GOPATH=$HOME/go
 
 export ANDROID_HOME ANDROID_NDK_HOME
 export PATH="$GOPATH/bin:$JAVAC:$PATH"
+export GOTOOLCHAIN=go1.26.3
 
 "$GOPATH/bin/gomobile" bind \
     -target=android/arm64,android/amd64 \
