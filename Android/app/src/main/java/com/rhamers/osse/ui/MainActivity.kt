@@ -30,6 +30,7 @@ import com.rhamers.osse.model.AudioSource
 import com.rhamers.osse.model.Episode
 import com.rhamers.osse.model.TrackId
 import com.rhamers.osse.player.MultiTrackService
+import com.rhamers.osse.ui.podcast.EpisodeDetailScreen
 import com.rhamers.osse.ui.podcast.EpisodeListScreen
 import com.rhamers.osse.ui.podcast.PodcastSearchScreen
 import com.rhamers.osse.ui.podcast.PodcastViewModel
@@ -84,7 +85,7 @@ class MainActivity : ComponentActivity() {
                                 label = { Text("Now Playing") }
                             )
                             NavigationBarItem(
-                                selected = currentScreen is Screen.PodcastSearch || currentScreen is Screen.EpisodeList,
+                                selected = currentScreen is Screen.PodcastSearch || currentScreen is Screen.EpisodeList || currentScreen is Screen.EpisodeDetail,
                                 onClick = { currentScreen = Screen.PodcastSearch },
                                 icon = { Icon(Icons.Default.Podcasts, contentDescription = null) },
                                 label = { Text("Podcasts") }
@@ -127,6 +128,17 @@ class MainActivity : ComponentActivity() {
                             onPlayEpisode = ::playEpisode,
                             onAddToQueue = { episode -> podcastViewModel.addToQueue(episode.guid) },
                             onBack = { currentScreen = Screen.PodcastSearch },
+                            onEpisodeClick = { episode -> currentScreen = Screen.EpisodeDetail(episode, screen.podcastTitle) },
+                            contentPadding = contentPadding
+                        )
+
+                        is Screen.EpisodeDetail -> EpisodeDetailScreen(
+                            episode = screen.episode,
+                            onPlay = { episode ->
+                                playEpisode(episode)
+                            },
+                            onAddToQueue = { episode -> podcastViewModel.addToQueue(episode.guid) },
+                            onBack = { currentScreen = Screen.EpisodeList(screen.episode.podcastFeedUrl, screen.podcastTitle) },
                             contentPadding = contentPadding
                         )
 

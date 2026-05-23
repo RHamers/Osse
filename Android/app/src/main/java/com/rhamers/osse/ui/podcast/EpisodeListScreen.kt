@@ -1,5 +1,6 @@
 package com.rhamers.osse.ui.podcast
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -50,6 +51,7 @@ fun EpisodeListScreen(
     onPlayEpisode: (Episode) -> Unit,
     onAddToQueue: (Episode) -> Unit,
     onBack: () -> Unit,
+    onEpisodeClick: (Episode) -> Unit = {},
     contentPadding: PaddingValues = PaddingValues()
 ) {
     val episodes by remember(feedUrl) { viewModel.episodesFor(feedUrl) }.collectAsState(emptyList())
@@ -92,7 +94,7 @@ fun EpisodeListScreen(
         } else {
             LazyColumn {
                 items(episodes, key = { it.guid }) { episode ->
-                    EpisodeItem(episode, onPlayEpisode, onAddToQueue)
+                    EpisodeItem(episode, onPlayEpisode, onAddToQueue, onEpisodeClick)
                     HorizontalDivider()
                 }
             }
@@ -104,7 +106,8 @@ fun EpisodeListScreen(
 private fun EpisodeItem(
     episode: Episode,
     onPlay: (Episode) -> Unit,
-    onQueue: (Episode) -> Unit
+    onQueue: (Episode) -> Unit,
+    onClick: (Episode) -> Unit = {}
 ) {
     ListItem(
         headlineContent = {
@@ -138,7 +141,7 @@ private fun EpisodeItem(
                 }
             }
         },
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier.fillMaxWidth().clickable { onClick(episode) }
     )
 }
 
