@@ -18,6 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -47,6 +48,7 @@ import com.rhamers.osse.model.Podcast
 fun PodcastSearchScreen(
     viewModel: PodcastViewModel,
     onPodcastClick: (Podcast) -> Unit,
+    onImportOpml: () -> Unit = {},
     contentPadding: PaddingValues = PaddingValues()
 ) {
     val subscriptions by viewModel.subscriptions.collectAsState()
@@ -60,12 +62,18 @@ fun PodcastSearchScreen(
             .fillMaxSize()
             .padding(contentPadding)
     ) {
-        OutlinedTextField(
-            value = query,
-            onValueChange = { query = it; if (it.isBlank()) viewModel.clearSearch() },
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
+                .padding(end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it; if (it.isBlank()) viewModel.clearSearch() },
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 16.dp, top = 8.dp, bottom = 8.dp),
             placeholder = { Text("Search podcasts or paste feed URL") },
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
             singleLine = true,
@@ -80,6 +88,10 @@ fun PodcastSearchScreen(
                 }
             })
         )
+            IconButton(onClick = onImportOpml) {
+                Icon(Icons.Default.FolderOpen, contentDescription = "Import OPML")
+            }
+        }
 
         when (val state = searchState) {
             SearchState.Idle -> SubscribedList(subscriptions, onPodcastClick, viewModel)

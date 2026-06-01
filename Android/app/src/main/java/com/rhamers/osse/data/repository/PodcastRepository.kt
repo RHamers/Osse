@@ -21,4 +21,5 @@ interface PodcastRepository {
     suspend fun reorderQueue(items: List<QueueItem>)
     suspend fun toggleAutoQueue(feedUrl: String, autoQueue: Boolean)
     suspend fun markEpisodeCompleted(guid: String)
+    suspend fun importOpml(feedUrls: List<String>)
 }

@@ -149,6 +149,10 @@ class DefaultPodcastRepository(
     override suspend fun markEpisodeCompleted(guid: String) = withContext(Dispatchers.IO) {
         episodeDao.setCompleted(guid, true)
     }
+
+    override suspend fun importOpml(feedUrls: List<String>) {
+        feedUrls.forEach { subscribeByUrl(it) }
+    }
 }
 
 private fun PodcastEntity.toDomain() =

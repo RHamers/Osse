@@ -57,4 +57,7 @@ class FakePodcastRepository : PodcastRepository {
 
     val completedGuids = mutableListOf<String>()
     override suspend fun markEpisodeCompleted(guid: String) { completedGuids += guid }
+
+    val importedUrls = mutableListOf<String>()
+    override suspend fun importOpml(feedUrls: List<String>) { importedUrls += feedUrls }
 }

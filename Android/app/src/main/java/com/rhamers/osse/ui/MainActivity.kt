@@ -49,6 +49,7 @@ class MainActivity : ComponentActivity() {
 
     private var pendingTrackId = TrackId.PODCAST
     private lateinit var filePickerLauncher: ActivityResultLauncher<Array<String>>
+    private lateinit var opmlPickerLauncher: ActivityResultLauncher<Array<String>>
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, service: IBinder) {
@@ -66,6 +67,14 @@ class MainActivity : ComponentActivity() {
         filePickerLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri != null) {
                 binder?.getTrack(pendingTrackId)?.setSource(AudioSource.LocalFile(uri))
+            }
+        }
+
+        opmlPickerLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) {
+                contentResolver.openInputStream(uri)?.use { stream ->
+                    podcastViewModel.importOpml(stream)
+                }
             }
         }
 
@@ -124,6 +133,7 @@ class MainActivity : ComponentActivity() {
                             onPodcastClick = { podcast ->
                                 currentScreen = Screen.EpisodeList(podcast.feedUrl, podcast.title)
                             },
+                            onImportOpml = { opmlPickerLauncher.launch(arrayOf("text/*", "application/xml", "*/*")) },
                             contentPadding = contentPadding
                         )
 
