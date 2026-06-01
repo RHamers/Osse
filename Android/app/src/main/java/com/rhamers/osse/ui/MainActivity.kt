@@ -24,11 +24,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
 import com.rhamers.osse.data.db.OsseDatabase
 import com.rhamers.osse.data.repository.DefaultPodcastRepository
 import com.rhamers.osse.model.AudioSource
 import com.rhamers.osse.model.Episode
 import com.rhamers.osse.model.TrackId
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.rhamers.osse.player.MultiTrackService
 import com.rhamers.osse.ui.podcast.EpisodeDetailScreen
 import com.rhamers.osse.ui.podcast.EpisodeListScreen
@@ -85,7 +89,8 @@ class MainActivity : ComponentActivity() {
                                 label = { Text("Now Playing") }
                             )
                             NavigationBarItem(
-                                selected = currentScreen is Screen.PodcastSearch || currentScreen is Screen.EpisodeList || currentScreen is Screen.EpisodeDetail,
+                                selected = currentScreen is Screen.PodcastSearch || currentScreen is Screen.EpisodeList ||
+                            (currentScreen is Screen.EpisodeDetail && (currentScreen as Screen.EpisodeDetail).backScreen !is Screen.Tracks),
                                 onClick = { currentScreen = Screen.PodcastSearch },
                                 icon = { Icon(Icons.Default.Podcasts, contentDescription = null) },
                                 label = { Text("Podcasts") }
@@ -110,7 +115,8 @@ class MainActivity : ComponentActivity() {
                             onSelectLocalFile = { trackId ->
                                 pendingTrackId = trackId
                                 filePickerLauncher.launch(arrayOf("audio/*"))
-                            }
+                            },
+                            onEpisodeTitleClick = { trackId -> openEpisodeDetailFromPlayer(trackId) }
                         )
 
                         Screen.PodcastSearch -> PodcastSearchScreen(
@@ -128,7 +134,7 @@ class MainActivity : ComponentActivity() {
                             onPlayEpisode = ::playEpisode,
                             onAddToQueue = { episode -> podcastViewModel.addToQueue(episode.guid) },
                             onBack = { currentScreen = Screen.PodcastSearch },
-                            onEpisodeClick = { episode -> currentScreen = Screen.EpisodeDetail(episode, screen.podcastTitle) },
+                            onEpisodeClick = { episode -> currentScreen = Screen.EpisodeDetail(episode, screen) },
                             contentPadding = contentPadding
                         )
 
@@ -138,7 +144,7 @@ class MainActivity : ComponentActivity() {
                                 playEpisode(episode)
                             },
                             onAddToQueue = { episode -> podcastViewModel.addToQueue(episode.guid) },
-                            onBack = { currentScreen = Screen.EpisodeList(screen.episode.podcastFeedUrl, screen.podcastTitle) },
+                            onBack = { currentScreen = screen.backScreen },
                             contentPadding = contentPadding
                         )
 
@@ -173,6 +179,27 @@ class MainActivity : ComponentActivity() {
         track.setSource(AudioSource.RssFeed(episode.enclosureUrl), episode.title)
         track.play()
         currentScreen = Screen.Tracks
+    }
+
+    private fun openEpisodeDetailFromPlayer(trackId: TrackId) {
+        val track = binder?.getTrack(trackId) ?: return
+        val enclosureUrl = (track.state.value.source as? AudioSource.RssFeed)?.enclosureUrl ?: return
+        lifecycleScope.launch {
+            val db = OsseDatabase.get(this@MainActivity)
+            val entity = withContext(Dispatchers.IO) { db.episodeDao().getByEnclosureUrl(enclosureUrl) } ?: return@launch
+            val episode = Episode(
+                guid = entity.guid,
+                podcastFeedUrl = entity.podcastFeedUrl,
+                title = entity.title,
+                enclosureUrl = entity.enclosureUrl,
+                durationMs = entity.durationMs,
+                showNotes = entity.showNotes,
+                pubDateMs = entity.pubDateMs,
+                positionMs = entity.positionMs,
+                completed = entity.completed
+            )
+            currentScreen = Screen.EpisodeDetail(episode, Screen.Tracks)
+        }
     }
 
     private fun playEpisodeFromQueue(enclosureUrl: String, title: String) {

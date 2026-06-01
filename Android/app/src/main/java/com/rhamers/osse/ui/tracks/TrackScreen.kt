@@ -1,6 +1,7 @@
 package com.rhamers.osse.ui.tracks
 
 import android.content.res.Configuration
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -82,6 +83,7 @@ fun TrackScreen(
     extractor: YoutubeExtractor = YoutubeAudio,
     onSelectPodcast: (TrackId) -> Unit = {},
     onSelectLocalFile: (TrackId) -> Unit = {},
+    onEpisodeTitleClick: ((TrackId) -> Unit)? = null,
 ) {
     if (binder == null) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -110,7 +112,8 @@ fun TrackScreen(
                         extractor = extractor,
                         onSelectPodcast = { onSelectPodcast(id) },
                         onSelectLocalFile = { onSelectLocalFile(id) },
-                        onMarkComplete = { binder.markEpisodeComplete(id) }
+                        onMarkComplete = { binder.markEpisodeComplete(id) },
+                        onTitleClick = onEpisodeTitleClick?.let { cb -> { cb(id) } }
                     )
                 }
             }
@@ -133,7 +136,8 @@ fun TrackScreen(
                         extractor = extractor,
                         onSelectPodcast = { onSelectPodcast(id) },
                         onSelectLocalFile = { onSelectLocalFile(id) },
-                        onMarkComplete = { binder.markEpisodeComplete(id) }
+                        onMarkComplete = { binder.markEpisodeComplete(id) },
+                        onTitleClick = onEpisodeTitleClick?.let { cb -> { cb(id) } }
                     )
                 }
             }
@@ -150,6 +154,7 @@ private fun TrackPlayerCard(
     onSelectPodcast: () -> Unit,
     onSelectLocalFile: () -> Unit,
     onMarkComplete: () -> Unit,
+    onTitleClick: (() -> Unit)? = null,
 ) {
     val state by trackPlayer.state.collectAsState()
     val context = LocalContext.current
@@ -216,7 +221,8 @@ private fun TrackPlayerCard(
         onSelectPodcast = onSelectPodcast,
         onSelectLocalFile = onSelectLocalFile,
         onSelectYoutube = { showYoutubeDialog = true },
-        onMarkComplete = onMarkComplete
+        onMarkComplete = onMarkComplete,
+        onTitleClick = onTitleClick
     )
 
     if (showYoutubeDialog) {
@@ -330,6 +336,7 @@ fun TrackCard(
     onSelectLocalFile: () -> Unit = {},
     onSelectYoutube: () -> Unit = {},
     onMarkComplete: (() -> Unit)? = null,
+    onTitleClick: (() -> Unit)? = null,
 ) {
     Card(modifier = modifier) {
         Column(
@@ -381,14 +388,17 @@ fun TrackCard(
                 }
             }
 
-            // Source
+            // Source — tappable when an RSS episode is loaded and caller provides a handler
+            val titleClickable = onTitleClick != null && state.source is AudioSource.RssFeed
             Text(
                 text = state.title ?: state.source?.toDisplayString() ?: "No source loaded",
                 style = MaterialTheme.typography.bodySmall,
-                color = if (state.source != null) MaterialTheme.colorScheme.onSurface
+                color = if (titleClickable) MaterialTheme.colorScheme.primary
+                        else if (state.source != null) MaterialTheme.colorScheme.onSurface
                         else MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
+                modifier = if (titleClickable) Modifier.clickable { onTitleClick!!() } else Modifier
             )
 
             // Position (only when duration is known)

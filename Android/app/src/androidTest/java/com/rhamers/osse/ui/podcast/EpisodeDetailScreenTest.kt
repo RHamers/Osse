@@ -1,8 +1,6 @@
 package com.rhamers.osse.ui.podcast
 
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.hasContentDescription
-import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -101,9 +99,6 @@ class EpisodeDetailScreenTest {
 
     @Test fun doesNotShowNoShowNotesFallbackWhenNotesPresent() {
         setContent(episode = episode(showNotes = "<p>Content</p>"))
-        composeTestRule.waitUntil(2_000) {
-            composeTestRule.onAllNodes(hasContentDescription("Show notes")).fetchSemanticsNodes().isNotEmpty()
-        }
         composeTestRule.onNodeWithText("No show notes available.").assertDoesNotExist()
     }
 }

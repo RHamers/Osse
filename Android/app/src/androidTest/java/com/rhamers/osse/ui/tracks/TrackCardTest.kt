@@ -40,6 +40,7 @@ class TrackCardTest {
         onSelectLocalFile: () -> Unit = {},
         onSelectYoutube: () -> Unit = {},
         onMarkComplete: (() -> Unit)? = null,
+        onTitleClick: (() -> Unit)? = null,
     ) {
         composeRule.setContent {
             TrackCard(
@@ -57,6 +58,7 @@ class TrackCardTest {
                 onSelectLocalFile = onSelectLocalFile,
                 onSelectYoutube = onSelectYoutube,
                 onMarkComplete = onMarkComplete,
+                onTitleClick = onTitleClick,
             )
         }
     }
@@ -307,5 +309,40 @@ class TrackCardTest {
     fun showsYoutubeStreamDisplayString() {
         setCard(TrackState(source = AudioSource.YoutubeStream("https://stream.example.com/audio")))
         composeRule.onNodeWithText("YouTube stream").assertIsDisplayed()
+    }
+
+    // ── title click ──────────────────────────────────────────────────────────
+
+    @Test
+    fun clickingTitleWithRssFeedAndCallbackInvokesCallback() {
+        var called = false
+        setCard(
+            state = TrackState(source = AudioSource.RssFeed("https://example.com/ep.mp3"), title = "My Episode"),
+            onTitleClick = { called = true }
+        )
+        composeRule.onNodeWithText("My Episode").performClick()
+        assertTrue(called)
+    }
+
+    @Test
+    fun clickingTitleWithNonRssFeedSourceDoesNotInvokeCallback() {
+        var called = false
+        setCard(
+            state = TrackState(source = AudioSource.YoutubeStream("https://stream.example.com"), title = "Some Video"),
+            onTitleClick = { called = true }
+        )
+        composeRule.onNodeWithText("Some Video").performClick()
+        assertFalse(called)
+    }
+
+    @Test
+    fun titleWithNoCallbackIsNotClickable() {
+        var called = false
+        setCard(
+            state = TrackState(source = AudioSource.RssFeed("https://example.com/ep.mp3"), title = "My Episode"),
+            onTitleClick = null
+        )
+        composeRule.onNodeWithText("My Episode").performClick()
+        assertFalse(called)
     }
 }
