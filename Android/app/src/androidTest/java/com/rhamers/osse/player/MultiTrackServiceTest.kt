@@ -8,9 +8,13 @@ import android.os.IBinder
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.rhamers.osse.data.db.EpisodeEntity
 import com.rhamers.osse.data.db.OsseDatabase
+import com.rhamers.osse.data.db.PodcastEntity
+import com.rhamers.osse.data.db.QueueItemEntity
 import com.rhamers.osse.model.AudioSource
 import com.rhamers.osse.model.TrackId
+import kotlinx.coroutines.runBlocking
 import org.junit.AfterClass
 import org.junit.Assert.*
 import org.junit.Before
@@ -160,5 +164,62 @@ class MultiTrackServiceTest {
         }
         assertEquals(2.0f, binder.getTrack(TrackId.MUSIC)!!.state.value.speed, 0.001f)
         assertEquals(1.0f, binder.getTrack(TrackId.PODCAST)!!.state.value.speed, 0.001f)
+    }
+
+    @Test
+    fun autoAdvanceKeepsNextEpisodeInQueue() {
+        val db = OsseDatabase.get(ApplicationProvider.getApplicationContext())
+        runBlocking {
+            db.podcastDao().upsert(
+                PodcastEntity(feedUrl = "https://feed.example.com", title = "Podcast",
+                    artworkUrl = null, description = null)
+            )
+            db.episodeDao().upsertAll(listOf(
+                EpisodeEntity(guid = "ep1", podcastFeedUrl = "https://feed.example.com",
+                    title = "Episode 1", enclosureUrl = "https://example.com/ep1.mp3",
+                    durationMs = 0L, showNotes = null, pubDateMs = 0L),
+                EpisodeEntity(guid = "ep2", podcastFeedUrl = "https://feed.example.com",
+                    title = "Episode 2", enclosureUrl = "https://example.com/ep2.mp3",
+                    durationMs = 0L, showNotes = null, pubDateMs = 0L)
+            ))
+            db.queueItemDao().insert(QueueItemEntity(episodeGuid = "ep1", position = 0, addedAt = 0L))
+            db.queueItemDao().insert(QueueItemEntity(episodeGuid = "ep2", position = 1, addedAt = 0L))
+        }
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST)
+                .setSource(AudioSource.RssFeed("https://example.com/ep1.mp3"), "Episode 1")
+        }
+        instrumentation.runOnMainSync { binder.markCurrentEpisodeComplete() }
+        Thread.sleep(500)
+        instrumentation.runOnMainSync {}
+
+        val guids = runBlocking { db.queueItemDao().getAllGuids() }
+        assertFalse("ep1 should be removed from queue", guids.contains("ep1"))
+        assertTrue("ep2 should still be in queue", guids.contains("ep2"))
+    }
+
+    @Test
+    fun markCompleteMarksEpisodeCompletedInDb() {
+        val db = OsseDatabase.get(ApplicationProvider.getApplicationContext())
+        runBlocking {
+            db.podcastDao().upsert(
+                PodcastEntity(feedUrl = "https://feed.example.com", title = "Podcast",
+                    artworkUrl = null, description = null)
+            )
+            db.episodeDao().upsertAll(listOf(
+                EpisodeEntity(guid = "ep1", podcastFeedUrl = "https://feed.example.com",
+                    title = "Episode 1", enclosureUrl = "https://example.com/ep1.mp3",
+                    durationMs = 0L, showNotes = null, pubDateMs = 0L)
+            ))
+            db.queueItemDao().insert(QueueItemEntity(episodeGuid = "ep1", position = 0, addedAt = 0L))
+        }
+        val itemId = runBlocking { db.queueItemDao().peekFirst()!!.id }
+        instrumentation.runOnMainSync { binder.addTrack(TrackId.PODCAST) }
+        instrumentation.runOnMainSync { binder.markComplete(itemId, "https://example.com/ep1.mp3") }
+        Thread.sleep(300)
+        instrumentation.runOnMainSync {}
+
+        val episode = runBlocking { db.episodeDao().getByGuid("ep1") }
+        assertTrue("episode should be marked completed in DB", episode!!.completed)
     }
 }

@@ -182,4 +182,44 @@ class UpNextScreenTest {
         }
         composeRule.onNode(hasContentDescription("Reorder")).assertIsDisplayed()
     }
+
+    @Test fun nowPlayingIndicatorShownForActiveEpisode() {
+        val playing = item(1, "Playing Now", "Podcast")
+        repo.queue.value = listOf(playing)
+        composeRule.setContent {
+            OsseTheme {
+                UpNextScreen(
+                    viewModel = viewModel,
+                    onPlayEpisode = { _, _ -> },
+                    onMarkComplete = {},
+                    currentPlayingUrl = playing.enclosureUrl
+                )
+            }
+        }
+        composeRule.waitUntil(2_000) {
+            composeRule.onAllNodes(hasContentDescription("Now playing")).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNode(hasContentDescription("Now playing")).assertIsDisplayed()
+        composeRule.onNode(hasContentDescription("Play")).assertDoesNotExist()
+    }
+
+    @Test fun playButtonShownForNonActiveEpisode() {
+        val notPlaying = item(1, "Waiting", "Podcast")
+        repo.queue.value = listOf(notPlaying)
+        composeRule.setContent {
+            OsseTheme {
+                UpNextScreen(
+                    viewModel = viewModel,
+                    onPlayEpisode = { _, _ -> },
+                    onMarkComplete = {},
+                    currentPlayingUrl = "https://example.com/other.mp3"
+                )
+            }
+        }
+        composeRule.waitUntil(2_000) {
+            composeRule.onAllNodes(hasContentDescription("Play")).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNode(hasContentDescription("Play")).assertIsDisplayed()
+        composeRule.onNode(hasContentDescription("Now playing")).assertDoesNotExist()
+    }
 }

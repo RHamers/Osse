@@ -49,15 +49,7 @@ class MultiTrackService : MediaSessionService() {
         fun markEpisodeComplete(id: TrackId) {
             serviceScope.launch {
                 val track = tracks[id] ?: return@launch
-                val enclosureUrl = (track.state.value.source as? AudioSource.RssFeed)?.enclosureUrl
-                    ?: return@launch
-                withContext(Dispatchers.IO) {
-                    val db = OsseDatabase.get(this@MultiTrackService)
-                    db.episodeDao().getByEnclosureUrl(enclosureUrl)?.let { episode ->
-                        db.episodeDao().setCompleted(episode.guid, true)
-                        db.queueItemDao().deleteByGuid(episode.guid)
-                    }
-                }
+                if (track.state.value.source !is AudioSource.RssFeed) return@launch
                 track.pause()
                 if (id == TrackId.PODCAST) autoAdvance()
             }
@@ -66,10 +58,17 @@ class MultiTrackService : MediaSessionService() {
         fun markComplete(itemId: Long, enclosureUrl: String) {
             serviceScope.launch {
                 withContext(Dispatchers.IO) {
-                    OsseDatabase.get(this@MultiTrackService).queueItemDao().deleteById(itemId)
+                    val db = OsseDatabase.get(this@MultiTrackService)
+                    db.episodeDao().getByEnclosureUrl(enclosureUrl)?.let { ep ->
+                        db.episodeDao().setCompleted(ep.guid, true)
+                    }
+                    db.queueItemDao().deleteById(itemId)
                 }
                 val currentUrl = (tracks[TrackId.PODCAST]?.state?.value?.source as? AudioSource.RssFeed)?.enclosureUrl
-                if (currentUrl == enclosureUrl) autoAdvance()
+                if (currentUrl == enclosureUrl) {
+                    tracks[TrackId.PODCAST]?.pause()
+                    autoAdvance()
+                }
             }
         }
 
@@ -110,15 +109,28 @@ class MultiTrackService : MediaSessionService() {
 
     private suspend fun autoAdvance() {
         val db = OsseDatabase.get(this)
-        val (first, episode) = withContext(Dispatchers.IO) {
+        val track = tracks[TrackId.PODCAST] ?: return
+
+        // Mark the episode that just ended/was completed as done and remove from queue.
+        // No-op if it was already handled (e.g. by a prior markEpisodeComplete call).
+        val currentUrl = (track.state.value.source as? AudioSource.RssFeed)?.enclosureUrl
+        if (currentUrl != null) {
+            withContext(Dispatchers.IO) {
+                db.episodeDao().getByEnclosureUrl(currentUrl)?.let { ep ->
+                    db.episodeDao().setCompleted(ep.guid, true)
+                    db.queueItemDao().deleteByGuid(ep.guid)
+                }
+            }
+        }
+
+        // Start the next episode without removing it from the queue.
+        val episode = withContext(Dispatchers.IO) {
             val item = db.queueItemDao().peekFirst() ?: return@withContext null
             val ep = db.episodeDao().getByGuid(item.episodeGuid)
-            if (ep != null) item to ep else { db.queueItemDao().delete(item); null }
+            if (ep == null) { db.queueItemDao().delete(item); null } else ep
         } ?: return
 
-        val track = tracks[TrackId.PODCAST] ?: return
         track.setSource(AudioSource.RssFeed(episode.enclosureUrl), episode.title)
         track.play()
-        withContext(Dispatchers.IO) { db.queueItemDao().delete(first) }
     }
 }

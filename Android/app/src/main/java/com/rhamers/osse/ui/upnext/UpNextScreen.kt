@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DragHandle
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.TaskAlt
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -47,6 +48,7 @@ fun UpNextScreen(
     viewModel: PodcastViewModel,
     onPlayEpisode: (enclosureUrl: String, title: String) -> Unit,
     onMarkComplete: (QueueItem) -> Unit,
+    currentPlayingUrl: String? = null,
     contentPadding: PaddingValues = PaddingValues()
 ) {
     val queue by viewModel.queue.collectAsState()
@@ -101,8 +103,17 @@ fun UpNextScreen(
                             },
                             trailingContent = {
                                 Row {
-                                    IconButton(onClick = { onPlayEpisode(item.enclosureUrl, item.episodeTitle) }) {
-                                        Icon(Icons.Default.PlayArrow, contentDescription = "Play")
+                                    if (item.enclosureUrl == currentPlayingUrl) {
+                                        Icon(
+                                            Icons.Default.GraphicEq,
+                                            contentDescription = "Now playing",
+                                            modifier = Modifier.padding(12.dp),
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    } else {
+                                        IconButton(onClick = { onPlayEpisode(item.enclosureUrl, item.episodeTitle) }) {
+                                            Icon(Icons.Default.PlayArrow, contentDescription = "Play")
+                                        }
                                     }
                                     IconButton(onClick = { onMarkComplete(item) }) {
                                         Icon(Icons.Default.TaskAlt, contentDescription = "Mark as done")

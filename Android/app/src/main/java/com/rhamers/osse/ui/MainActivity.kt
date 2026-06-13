@@ -20,8 +20,10 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
@@ -30,6 +32,8 @@ import com.rhamers.osse.data.repository.DefaultPodcastRepository
 import com.rhamers.osse.model.AudioSource
 import com.rhamers.osse.model.Episode
 import com.rhamers.osse.model.TrackId
+import com.rhamers.osse.model.TrackState
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -168,12 +172,20 @@ class MainActivity : ComponentActivity() {
                             contentPadding = contentPadding
                         )
 
-                        Screen.UpNext -> UpNextScreen(
-                            viewModel = podcastViewModel,
-                            onPlayEpisode = ::playEpisodeFromQueue,
-                            onMarkComplete = { item -> binder?.markComplete(item.id, item.enclosureUrl) },
-                            contentPadding = contentPadding
-                        )
+                        Screen.UpNext -> {
+                            val podcastTrackState by remember(binder) {
+                                binder?.getTrack(TrackId.PODCAST)?.state ?: MutableStateFlow(TrackState())
+                            }.collectAsState()
+                            val currentPlayingUrl =
+                                (podcastTrackState.source as? AudioSource.RssFeed)?.enclosureUrl
+                            UpNextScreen(
+                                viewModel = podcastViewModel,
+                                onPlayEpisode = ::playEpisodeFromQueue,
+                                onMarkComplete = { item -> binder?.markComplete(item.id, item.enclosureUrl) },
+                                currentPlayingUrl = currentPlayingUrl,
+                                contentPadding = contentPadding
+                            )
+                        }
                     }
                 }
             }
