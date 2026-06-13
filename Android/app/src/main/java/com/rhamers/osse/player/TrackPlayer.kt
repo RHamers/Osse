@@ -28,6 +28,7 @@ class TrackPlayer(context: Context, val trackId: TrackId) {
             AudioAttributes.Builder().setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(),
             /* handleAudioFocus= */ false
         )
+        .setWakeMode(C.WAKE_MODE_LOCAL)
         .build()
 
     var onEnded: (() -> Unit)? = null
