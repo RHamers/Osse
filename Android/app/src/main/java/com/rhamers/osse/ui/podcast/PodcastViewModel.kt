@@ -9,7 +9,9 @@ import com.rhamers.osse.model.Episode
 import com.rhamers.osse.model.Podcast
 import com.rhamers.osse.model.QueueItem
 import com.rhamers.osse.rss.OpmlParser
+import com.rhamers.osse.rss.OpmlWriter
 import java.io.InputStream
+import java.io.OutputStream
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -99,6 +101,11 @@ class PodcastViewModel(private val repo: PodcastRepository) : ViewModel() {
         viewModelScope.launch {
             try { repo.toggleAutoQueue(feedUrl, autoQueue) } catch (_: Exception) {}
         }
+    }
+
+    fun exportOpml(stream: OutputStream) {
+        val opml = OpmlWriter.generate(subscriptions.value)
+        stream.writer().use { it.write(opml) }
     }
 
     fun importOpml(stream: InputStream) {

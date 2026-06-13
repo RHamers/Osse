@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -49,6 +50,7 @@ fun PodcastSearchScreen(
     viewModel: PodcastViewModel,
     onPodcastClick: (Podcast) -> Unit,
     onImportOpml: () -> Unit = {},
+    onExportOpml: () -> Unit = {},
     contentPadding: PaddingValues = PaddingValues()
 ) {
     val subscriptions by viewModel.subscriptions.collectAsState()
@@ -90,6 +92,9 @@ fun PodcastSearchScreen(
         )
             IconButton(onClick = onImportOpml) {
                 Icon(Icons.Default.FolderOpen, contentDescription = "Import OPML")
+            }
+            IconButton(onClick = onExportOpml) {
+                Icon(Icons.Default.Share, contentDescription = "Export OPML")
             }
         }
 

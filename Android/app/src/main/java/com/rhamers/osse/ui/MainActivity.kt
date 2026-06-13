@@ -50,6 +50,7 @@ class MainActivity : ComponentActivity() {
     private var pendingTrackId = TrackId.PODCAST
     private lateinit var filePickerLauncher: ActivityResultLauncher<Array<String>>
     private lateinit var opmlPickerLauncher: ActivityResultLauncher<Array<String>>
+    private lateinit var opmlExportLauncher: ActivityResultLauncher<String>
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, service: IBinder) {
@@ -74,6 +75,14 @@ class MainActivity : ComponentActivity() {
             if (uri != null) {
                 contentResolver.openInputStream(uri)?.use { stream ->
                     podcastViewModel.importOpml(stream)
+                }
+            }
+        }
+
+        opmlExportLauncher = registerForActivityResult(ActivityResultContracts.CreateDocument("text/x-opml")) { uri ->
+            if (uri != null) {
+                contentResolver.openOutputStream(uri)?.use { stream ->
+                    podcastViewModel.exportOpml(stream)
                 }
             }
         }
@@ -134,6 +143,7 @@ class MainActivity : ComponentActivity() {
                                 currentScreen = Screen.EpisodeList(podcast.feedUrl, podcast.title)
                             },
                             onImportOpml = { opmlPickerLauncher.launch(arrayOf("text/*", "application/xml", "*/*")) },
+                            onExportOpml = { opmlExportLauncher.launch("osse-subscriptions.opml") },
                             contentPadding = contentPadding
                         )
 
