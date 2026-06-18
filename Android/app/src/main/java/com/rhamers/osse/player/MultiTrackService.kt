@@ -8,6 +8,8 @@ import androidx.media3.session.MediaSessionService
 import com.rhamers.osse.data.db.OsseDatabase
 import com.rhamers.osse.model.AudioSource
 import com.rhamers.osse.model.TrackId
+import com.rhamers.osse.player.DefaultYoutubeCacheManager
+import com.rhamers.osse.youtube.YoutubeAudio
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -24,9 +26,11 @@ class MultiTrackService : MediaSessionService() {
     private var mediaSession: MediaSession? = null
     private val _activeTrackIds = MutableStateFlow<List<TrackId>>(emptyList())
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private lateinit var cacheManager: YoutubeCacheManager
 
     inner class LocalBinder : Binder() {
         val activeTrackIds: StateFlow<List<TrackId>> = _activeTrackIds.asStateFlow()
+        val cacheManager: YoutubeCacheManager get() = this@MultiTrackService.cacheManager
 
         fun getTrack(id: TrackId): TrackPlayer? = tracks[id]
 
@@ -85,6 +89,12 @@ class MultiTrackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
+        cacheManager = DefaultYoutubeCacheManager(
+            extractor = YoutubeAudio,
+            cacheDir = (getExternalFilesDir("youtube") ?: filesDir).also { it.mkdirs() },
+            db = OsseDatabase.get(this),
+            scope = serviceScope,
+        )
         binder.addTrack(TrackId.PODCAST)
         binder.addTrack(TrackId.MUSIC)
     }

@@ -15,6 +15,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Podcasts
+import androidx.compose.material.icons.filled.VideoLibrary
+import com.rhamers.osse.ui.youtube.YoutubeLibraryScreen
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -123,6 +125,12 @@ class MainActivity : ComponentActivity() {
                                 icon = { Icon(Icons.Default.FormatListNumbered, contentDescription = null) },
                                 label = { Text("Up Next") }
                             )
+                            NavigationBarItem(
+                                selected = currentScreen is Screen.YoutubeLibrary,
+                                onClick = { currentScreen = Screen.YoutubeLibrary },
+                                icon = { Icon(Icons.Default.VideoLibrary, contentDescription = null) },
+                                label = { Text("Library") }
+                            )
                         }
                     }
                 ) { contentPadding ->
@@ -186,6 +194,23 @@ class MainActivity : ComponentActivity() {
                                 contentPadding = contentPadding
                             )
                         }
+
+                        Screen.YoutubeLibrary -> YoutubeLibraryScreen(
+                            cachedVideos = OsseDatabase.get(this).youtubeCacheDao().getAll(),
+                            onPlay = { entity ->
+                                val b = binder ?: return@YoutubeLibraryScreen
+                                b.getTrack(TrackId.MUSIC)?.apply {
+                                    setSource(AudioSource.YoutubeDownloaded(entity.localPath))
+                                    play()
+                                }
+                            },
+                            onDelete = { videoId ->
+                                lifecycleScope.launch {
+                                    binder?.cacheManager?.delete(videoId)
+                                }
+                            },
+                            contentPadding = contentPadding,
+                        )
                     }
                 }
             }

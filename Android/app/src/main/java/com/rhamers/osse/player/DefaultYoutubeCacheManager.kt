@@ -1,0 +1,130 @@
+package com.rhamers.osse.player
+
+import com.rhamers.osse.data.db.OsseDatabase
+import com.rhamers.osse.data.db.YoutubeCacheEntity
+import com.rhamers.osse.model.AudioSource
+import com.rhamers.osse.youtube.VideoSearchResult
+import com.rhamers.osse.youtube.YoutubeExtractor
+import com.rhamers.osse.youtube.YoutubeVideoMetadata
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.io.File
+import java.io.IOException
+import java.util.concurrent.TimeUnit
+
+class DefaultYoutubeCacheManager(
+    private val extractor: YoutubeExtractor,
+    private val cacheDir: File,
+    private val db: OsseDatabase,
+    private val scope: CoroutineScope,
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val downloadThumbnail: suspend (url: String, destPath: String) -> Unit = ::httpDownloadFile,
+) : YoutubeCacheManager {
+
+    private val inFlightMutex = Mutex()
+    private val inFlight = mutableMapOf<String, Job>()
+
+    override suspend fun resolveSource(
+        videoId: String,
+        videoUrl: String,
+        metadata: YoutubeVideoMetadata,
+    ): AudioSource {
+        val cached = withContext(ioDispatcher) { db.youtubeCacheDao().getById(videoId) }
+        if (cached != null) return AudioSource.YoutubeDownloaded(cached.localPath)
+
+        val streamUrl = withContext(ioDispatcher) { extractor.extractAudioUrl(videoUrl) }
+        scope.launch {
+            inFlightMutex.withLock {
+                if (inFlight.containsKey(videoId)) return@launch
+                inFlight[videoId] = coroutineContext[Job]!!
+            }
+            try {
+                saveToCache(videoId, videoUrl, metadata)
+            } catch (_: Exception) {
+            } finally {
+                inFlightMutex.withLock { inFlight.remove(videoId) }
+            }
+        }
+        return AudioSource.YoutubeStream(streamUrl)
+    }
+
+    override suspend fun downloadAndCache(
+        videoId: String,
+        videoUrl: String,
+        metadata: YoutubeVideoMetadata,
+    ): AudioSource {
+        val cached = withContext(ioDispatcher) { db.youtubeCacheDao().getById(videoId) }
+        if (cached != null) return AudioSource.YoutubeDownloaded(cached.localPath)
+        return saveToCache(videoId, videoUrl, metadata)
+    }
+
+    override suspend fun searchVideos(query: String, maxResults: Int): List<VideoSearchResult> =
+        extractor.searchVideos(query, maxResults)
+
+    override suspend fun delete(videoId: String) {
+        withContext(ioDispatcher) {
+            val entity = db.youtubeCacheDao().getById(videoId)
+            entity?.let {
+                File(it.localPath).delete()
+                File(it.thumbnailPath).delete()
+            }
+            db.youtubeCacheDao().delete(videoId)
+        }
+    }
+
+    private suspend fun saveToCache(
+        videoId: String,
+        videoUrl: String,
+        metadata: YoutubeVideoMetadata,
+    ): AudioSource {
+        val audioPath = File(cacheDir, "$videoId.webm").absolutePath
+        val thumbPath = File(cacheDir, "$videoId.jpg").absolutePath
+        try {
+            withContext(ioDispatcher) { extractor.downloadAudio(videoUrl, audioPath) }
+            downloadThumbnail(metadata.thumbnailUrl, thumbPath)
+            withContext(ioDispatcher) {
+                db.youtubeCacheDao().insert(
+                    YoutubeCacheEntity(
+                        videoId = videoId,
+                        title = metadata.title,
+                        channel = metadata.channel,
+                        durationSecs = metadata.durationSecs,
+                        thumbnailPath = thumbPath,
+                        localPath = audioPath,
+                        cachedAt = System.currentTimeMillis(),
+                    )
+                )
+            }
+            return AudioSource.YoutubeDownloaded(audioPath)
+        } catch (e: Exception) {
+            File(audioPath).delete()
+            File(thumbPath).delete()
+            throw e
+        }
+    }
+}
+
+private val sharedHttpClient = OkHttpClient.Builder()
+    .connectTimeout(10, TimeUnit.SECONDS)
+    .readTimeout(30, TimeUnit.SECONDS)
+    .build()
+
+private suspend fun httpDownloadFile(url: String, destPath: String) {
+    withContext(Dispatchers.IO) {
+        val response = sharedHttpClient.newCall(Request.Builder().url(url).build()).execute()
+        if (!response.isSuccessful) throw IOException("HTTP ${response.code} downloading $url")
+        val dest = File(destPath)
+        dest.parentFile?.mkdirs()
+        response.body?.byteStream()?.use { input ->
+            dest.outputStream().use { output -> input.copyTo(output) }
+        } ?: throw IOException("Empty response body for $url")
+    }
+}

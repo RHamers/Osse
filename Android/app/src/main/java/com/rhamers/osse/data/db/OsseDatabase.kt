@@ -8,16 +8,32 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [PodcastEntity::class, EpisodeEntity::class, QueueItemEntity::class],
-    version = 3,
+    entities = [PodcastEntity::class, EpisodeEntity::class, QueueItemEntity::class, YoutubeCacheEntity::class],
+    version = 4,
     exportSchema = false
 )
 abstract class OsseDatabase : RoomDatabase() {
     abstract fun podcastDao(): PodcastDao
     abstract fun episodeDao(): EpisodeDao
     abstract fun queueItemDao(): QueueItemDao
+    abstract fun youtubeCacheDao(): YoutubeCacheDao
 
     companion object {
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS youtube_cache (" +
+                    "videoId TEXT NOT NULL PRIMARY KEY, " +
+                    "title TEXT NOT NULL, " +
+                    "channel TEXT NOT NULL, " +
+                    "durationSecs INTEGER NOT NULL, " +
+                    "thumbnailPath TEXT NOT NULL, " +
+                    "localPath TEXT NOT NULL, " +
+                    "cachedAt INTEGER NOT NULL)"
+                )
+            }
+        }
+
         private val MIGRATION_2_3 = object : Migration(2, 3) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE episodes ADD COLUMN completed INTEGER NOT NULL DEFAULT 0")
@@ -46,7 +62,7 @@ abstract class OsseDatabase : RoomDatabase() {
                 OsseDatabase::class.java,
                 "osse.db"
             )
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build()
                 .also { instance = it }
         }

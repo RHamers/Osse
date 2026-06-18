@@ -19,10 +19,11 @@ import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.rhamers.osse.model.AudioSource
 import com.rhamers.osse.model.TrackId
+import com.rhamers.osse.player.FakeYoutubeCacheManager
 import com.rhamers.osse.player.MultiTrackService
 import com.rhamers.osse.ui.theme.OsseTheme
-import com.rhamers.osse.youtube.FakeYoutubeExtractor
 import com.rhamers.osse.youtube.VideoSearchResult
 import org.junit.AfterClass
 import org.junit.Assert.assertTrue
@@ -198,8 +199,8 @@ class TrackScreenTest {
 
     @Test
     fun youtubeExtractionSuccessClosesDialogAndSetsSource() {
-        val fake = FakeYoutubeExtractor(streamResult = Result.success("https://fake-stream.example.com/audio"))
-        composeRule.setContent { OsseTheme { TrackScreen(binder = binder, extractor = fake) } }
+        val fakeManager = FakeYoutubeCacheManager(resolveResult = Result.success(AudioSource.YoutubeStream("https://fake-stream.example.com/audio")))
+        composeRule.setContent { OsseTheme { TrackScreen(binder = binder, cacheManager = fakeManager) } }
         openYoutubeDialog()
         typeIntoYoutubeField("https://youtube.com/watch?v=abc")
         composeRule.onNodeWithText("Play").performClick()
@@ -211,8 +212,8 @@ class TrackScreenTest {
 
     @Test
     fun youtubeExtractionFailureShowsError() {
-        val fake = FakeYoutubeExtractor(streamResult = Result.failure(RuntimeException("cipher error")))
-        composeRule.setContent { OsseTheme { TrackScreen(binder = binder, extractor = fake) } }
+        val fakeManager = FakeYoutubeCacheManager(resolveResult = Result.failure(RuntimeException("cipher error")))
+        composeRule.setContent { OsseTheme { TrackScreen(binder = binder, cacheManager = fakeManager) } }
         openYoutubeDialog()
         typeIntoYoutubeField("https://youtube.com/watch?v=abc")
         composeRule.onNodeWithText("Play").performClick()
@@ -225,8 +226,8 @@ class TrackScreenTest {
 
     @Test
     fun youtubeDownloadSuccessClosesDialogAndSetsSource() {
-        val fake = FakeYoutubeExtractor(downloadResult = Result.success(Unit))
-        composeRule.setContent { OsseTheme { TrackScreen(binder = binder, extractor = fake) } }
+        val fakeManager = FakeYoutubeCacheManager(downloadResult = Result.success(Unit))
+        composeRule.setContent { OsseTheme { TrackScreen(binder = binder, cacheManager = fakeManager) } }
         openYoutubeDialog()
         typeIntoYoutubeField("https://youtube.com/watch?v=abc")
         composeRule.onNodeWithText("Download").performClick()
@@ -238,8 +239,8 @@ class TrackScreenTest {
 
     @Test
     fun youtubeDownloadFailureShowsError() {
-        val fake = FakeYoutubeExtractor(downloadResult = Result.failure(RuntimeException("disk full")))
-        composeRule.setContent { OsseTheme { TrackScreen(binder = binder, extractor = fake) } }
+        val fakeManager = FakeYoutubeCacheManager(downloadResult = Result.failure(RuntimeException("disk full")))
+        composeRule.setContent { OsseTheme { TrackScreen(binder = binder, cacheManager = fakeManager) } }
         openYoutubeDialog()
         typeIntoYoutubeField("https://youtube.com/watch?v=abc")
         composeRule.onNodeWithText("Download").performClick()
@@ -252,13 +253,13 @@ class TrackScreenTest {
 
     @Test
     fun youtubeSearchShowsResults() {
-        val fake = FakeYoutubeExtractor(
+        val fakeManager = FakeYoutubeCacheManager(
             searchResult = Result.success(listOf(
                 VideoSearchResult("vid1", "Lofi Beats", "Lofi Girl", 225),
                 VideoSearchResult("vid2", "Piano Music", "Relaxing", 3730),
             ))
         )
-        composeRule.setContent { OsseTheme { TrackScreen(binder = binder, extractor = fake) } }
+        composeRule.setContent { OsseTheme { TrackScreen(binder = binder, cacheManager = fakeManager) } }
         openYoutubeDialog()
         typeIntoYoutubeField("lofi")
         composeRule.onNodeWithContentDescription("Search").performClick()
@@ -271,13 +272,13 @@ class TrackScreenTest {
 
     @Test
     fun youtubeSearchResultPlayClosesDialogAndSetsStream() {
-        val fake = FakeYoutubeExtractor(
-            streamResult = Result.success("https://fake-stream.example.com/audio"),
+        val fakeManager = FakeYoutubeCacheManager(
+            resolveResult = Result.success(AudioSource.YoutubeStream("https://fake-stream.example.com/audio")),
             searchResult = Result.success(listOf(
                 VideoSearchResult("vid1", "Lofi Beats", "Lofi Girl", 225),
             ))
         )
-        composeRule.setContent { OsseTheme { TrackScreen(binder = binder, extractor = fake) } }
+        composeRule.setContent { OsseTheme { TrackScreen(binder = binder, cacheManager = fakeManager) } }
         openYoutubeDialog()
         typeIntoYoutubeField("lofi")
         composeRule.onNodeWithContentDescription("Search").performClick()
@@ -293,13 +294,13 @@ class TrackScreenTest {
 
     @Test
     fun youtubeSearchResultDownloadClosesDialogAndSetsSource() {
-        val fake = FakeYoutubeExtractor(
+        val fakeManager = FakeYoutubeCacheManager(
             downloadResult = Result.success(Unit),
             searchResult = Result.success(listOf(
                 VideoSearchResult("vid1", "Lofi Beats", "Lofi Girl", 225),
             ))
         )
-        composeRule.setContent { OsseTheme { TrackScreen(binder = binder, extractor = fake) } }
+        composeRule.setContent { OsseTheme { TrackScreen(binder = binder, cacheManager = fakeManager) } }
         openYoutubeDialog()
         typeIntoYoutubeField("lofi")
         composeRule.onNodeWithContentDescription("Search").performClick()
@@ -315,10 +316,10 @@ class TrackScreenTest {
 
     @Test
     fun youtubeSearchFailureShowsError() {
-        val fake = FakeYoutubeExtractor(
+        val fakeManager = FakeYoutubeCacheManager(
             searchResult = Result.failure(RuntimeException("network error"))
         )
-        composeRule.setContent { OsseTheme { TrackScreen(binder = binder, extractor = fake) } }
+        composeRule.setContent { OsseTheme { TrackScreen(binder = binder, cacheManager = fakeManager) } }
         openYoutubeDialog()
         typeIntoYoutubeField("lofi")
         composeRule.onNodeWithContentDescription("Search").performClick()

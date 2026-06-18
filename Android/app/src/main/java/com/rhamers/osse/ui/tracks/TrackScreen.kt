@@ -55,7 +55,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTag
@@ -68,10 +67,9 @@ import com.rhamers.osse.model.displayName
 import com.rhamers.osse.model.toDisplayString
 import com.rhamers.osse.player.MultiTrackService
 import com.rhamers.osse.player.TrackPlayer
+import com.rhamers.osse.player.YoutubeCacheManager
 import com.rhamers.osse.youtube.VideoSearchResult
-import com.rhamers.osse.youtube.YoutubeAudio
-import com.rhamers.osse.youtube.YoutubeExtractor
-import java.io.File
+import com.rhamers.osse.youtube.YoutubeVideoMetadata
 import java.util.UUID
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
@@ -80,7 +78,7 @@ import kotlinx.coroutines.launch
 fun TrackScreen(
     binder: MultiTrackService.LocalBinder?,
     contentPadding: PaddingValues = PaddingValues(),
-    extractor: YoutubeExtractor = YoutubeAudio,
+    cacheManager: YoutubeCacheManager? = null,
     onSelectPodcast: (TrackId) -> Unit = {},
     onSelectLocalFile: (TrackId) -> Unit = {},
     onEpisodeTitleClick: ((TrackId) -> Unit)? = null,
@@ -91,6 +89,8 @@ fun TrackScreen(
         }
         return
     }
+
+    val effectiveCacheManager = cacheManager ?: binder.cacheManager
 
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
@@ -109,7 +109,7 @@ fun TrackScreen(
                         modifier = Modifier.weight(1f).fillMaxHeight(),
                         label = id.displayName,
                         trackPlayer = track,
-                        extractor = extractor,
+                        cacheManager = effectiveCacheManager,
                         onSelectPodcast = { onSelectPodcast(id) },
                         onSelectLocalFile = { onSelectLocalFile(id) },
                         onMarkComplete = { binder.markEpisodeComplete(id) },
@@ -133,7 +133,7 @@ fun TrackScreen(
                         modifier = Modifier.weight(1f).fillMaxWidth(),
                         label = id.displayName,
                         trackPlayer = track,
-                        extractor = extractor,
+                        cacheManager = effectiveCacheManager,
                         onSelectPodcast = { onSelectPodcast(id) },
                         onSelectLocalFile = { onSelectLocalFile(id) },
                         onMarkComplete = { binder.markEpisodeComplete(id) },
@@ -150,14 +150,13 @@ private fun TrackPlayerCard(
     modifier: Modifier,
     label: String,
     trackPlayer: TrackPlayer,
-    extractor: YoutubeExtractor,
+    cacheManager: YoutubeCacheManager,
     onSelectPodcast: () -> Unit,
     onSelectLocalFile: () -> Unit,
     onMarkComplete: () -> Unit,
     onTitleClick: (() -> Unit)? = null,
 ) {
     val state by trackPlayer.state.collectAsState()
-    val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
     var showYoutubeDialog by remember { mutableStateOf(false) }
@@ -172,13 +171,13 @@ private fun TrackPlayerCard(
 
     fun dismiss() { showYoutubeDialog = false; youtubeInput = ""; youtubeError = null; searchResults = emptyList() }
 
-    fun doPlay(videoUrl: String) {
+    fun doPlay(videoId: String, videoUrl: String, metadata: YoutubeVideoMetadata) {
         scope.launch {
             extracting = true
             youtubeError = null
             try {
-                val streamUrl = extractor.extractAudioUrl(videoUrl)
-                trackPlayer.setSource(AudioSource.YoutubeStream(streamUrl))
+                val source = cacheManager.resolveSource(videoId, videoUrl, metadata)
+                trackPlayer.setSource(source)
                 dismiss()
             } catch (e: Exception) {
                 youtubeError = e.message ?: "Failed to extract audio URL"
@@ -188,15 +187,13 @@ private fun TrackPlayerCard(
         }
     }
 
-    fun doDownload(videoUrl: String, videoId: String) {
+    fun doDownload(videoId: String, videoUrl: String, metadata: YoutubeVideoMetadata) {
         scope.launch {
             downloading = true
             youtubeError = null
             try {
-                val dir = context.getExternalFilesDir("youtube") ?: context.filesDir
-                val outputPath = File(dir, "$videoId.webm").absolutePath
-                extractor.downloadAudio(videoUrl, outputPath)
-                trackPlayer.setSource(AudioSource.YoutubeDownloaded(outputPath))
+                val source = cacheManager.downloadAndCache(videoId, videoUrl, metadata)
+                trackPlayer.setSource(source)
                 dismiss()
             } catch (e: Exception) {
                 youtubeError = e.message ?: "Download failed"
@@ -245,7 +242,7 @@ private fun TrackPlayerCard(
                                             searching = true
                                             youtubeError = null
                                             try {
-                                                searchResults = extractor.searchVideos(youtubeInput.trim())
+                                                searchResults = cacheManager.searchVideos(youtubeInput.trim())
                                             } catch (e: Exception) {
                                                 youtubeError = e.message ?: "Search failed"
                                             } finally {
@@ -282,10 +279,22 @@ private fun TrackPlayerCard(
                                     result = result,
                                     enabled = !busy,
                                     onPlay = {
-                                        doPlay("https://www.youtube.com/watch?v=${result.id}")
+                                        val meta = YoutubeVideoMetadata(
+                                            title = result.title,
+                                            channel = result.channel,
+                                            durationSecs = result.durationSecs,
+                                            thumbnailUrl = "https://i.ytimg.com/vi/${result.id}/hqdefault.jpg",
+                                        )
+                                        doPlay(result.id, "https://www.youtube.com/watch?v=${result.id}", meta)
                                     },
                                     onDownload = {
-                                        doDownload("https://www.youtube.com/watch?v=${result.id}", result.id)
+                                        val meta = YoutubeVideoMetadata(
+                                            title = result.title,
+                                            channel = result.channel,
+                                            durationSecs = result.durationSecs,
+                                            thumbnailUrl = "https://i.ytimg.com/vi/${result.id}/hqdefault.jpg",
+                                        )
+                                        doDownload(result.id, "https://www.youtube.com/watch?v=${result.id}", meta)
                                     },
                                 )
                                 HorizontalDivider()
@@ -301,13 +310,21 @@ private fun TrackPlayerCard(
                             Regex("[?&]v=([^&]+)").find(youtubeInput)?.groupValues?.get(1)
                                 ?: UUID.randomUUID().toString()
                         }
+                        val urlMetadata = remember(urlId) {
+                            YoutubeVideoMetadata(
+                                title = urlId,
+                                channel = "",
+                                durationSecs = 0,
+                                thumbnailUrl = "https://i.ytimg.com/vi/$urlId/hqdefault.jpg",
+                            )
+                        }
                         TextButton(
                             enabled = !busy,
-                            onClick = { doDownload(youtubeInput.trim(), urlId) },
+                            onClick = { doDownload(urlId, youtubeInput.trim(), urlMetadata) },
                         ) { Text("Download") }
                         TextButton(
                             enabled = !busy,
-                            onClick = { doPlay(youtubeInput.trim()) },
+                            onClick = { doPlay(urlId, youtubeInput.trim(), urlMetadata) },
                         ) { Text("Play") }
                     }
                 }
