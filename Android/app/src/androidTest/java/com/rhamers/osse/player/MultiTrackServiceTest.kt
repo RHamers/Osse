@@ -67,6 +67,17 @@ class MultiTrackServiceTest {
     }
 
     @Test
+    fun serviceCanBeExplicitlyStartedIndependentOfBinding() {
+        // The fixed MainActivity calls startService() in onCreate() so the service
+        // survives unbindService() when the activity is backgrounded. Verify startService()
+        // returns a valid ComponentName (null would mean the service isn't declared in manifest).
+        val ctx = ApplicationProvider.getApplicationContext<Context>()
+        val name = ctx.startService(Intent(ctx, MultiTrackService::class.java))
+        assertNotNull("startService() must succeed for background audio to work", name)
+        assertEquals("com.rhamers.osse", name!!.packageName)
+    }
+
+    @Test
     fun activeTrackIdsEmptyOnBind() {
         assertEquals(emptyList<TrackId>(), binder.activeTrackIds.value)
     }

@@ -56,6 +56,7 @@ class YoutubeCacheManagerTest {
         thumbnailDownloader: suspend (String, String) -> Unit = { _, destPath ->
             File(destPath).apply { parentFile?.mkdirs(); createNewFile() }
         },
+        onCached: ((String, String) -> Unit)? = null,
     ) = DefaultYoutubeCacheManager(
         extractor = extractor,
         cacheDir = cacheDir,
@@ -63,6 +64,7 @@ class YoutubeCacheManagerTest {
         scope = testScope,
         ioDispatcher = UnconfinedTestDispatcher(testScope.testScheduler),
         downloadThumbnail = thumbnailDownloader,
+        onCached = onCached,
     )
 
     @Test
@@ -85,6 +87,27 @@ class YoutubeCacheManagerTest {
         manager().resolveSource("vid1", "https://youtube.com/watch?v=vid1", metadata())
         advanceUntilIdle()
         assertNotNull(db.youtubeCacheDao().getById("vid1"))
+    }
+
+    @Test
+    fun `resolveSource invokes onCached with stream url and local path after background download`() = testScope.runTest {
+        var capturedStream: String? = null
+        var capturedPath: String? = null
+        manager(onCached = { s, p -> capturedStream = s; capturedPath = p })
+            .resolveSource("vid1", "https://youtube.com/watch?v=vid1", metadata())
+        advanceUntilIdle()
+        assertEquals("https://fake-stream.example.com/audio", capturedStream)
+        assertNotNull(capturedPath)
+        assertTrue(capturedPath!!.endsWith("vid1.webm"))
+    }
+
+    @Test
+    fun `resolveSource does not invoke onCached when background download fails`() = testScope.runTest {
+        var called = false
+        manager(extractor = failingDownloadExtractor(), onCached = { _, _ -> called = true })
+            .resolveSource("vid1", "https://youtube.com/watch?v=vid1", metadata())
+        advanceUntilIdle()
+        assertFalse(called)
     }
 
     @Test

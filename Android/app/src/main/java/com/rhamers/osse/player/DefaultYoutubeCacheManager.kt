@@ -27,6 +27,7 @@ class DefaultYoutubeCacheManager(
     private val scope: CoroutineScope,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val downloadThumbnail: suspend (url: String, destPath: String) -> Unit = ::httpDownloadFile,
+    private val onCached: ((streamUrl: String, localPath: String) -> Unit)? = null,
 ) : YoutubeCacheManager {
 
     private val inFlightMutex = Mutex()
@@ -47,7 +48,8 @@ class DefaultYoutubeCacheManager(
                 inFlight[videoId] = coroutineContext[Job]!!
             }
             try {
-                saveToCache(videoId, videoUrl, metadata)
+                val local = saveToCache(videoId, videoUrl, metadata) as AudioSource.YoutubeDownloaded
+                onCached?.invoke(streamUrl, local.localPath)
             } catch (_: Exception) {
             } finally {
                 inFlightMutex.withLock { inFlight.remove(videoId) }

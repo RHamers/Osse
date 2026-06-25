@@ -96,6 +96,21 @@ class MultiTrackService : MediaSessionService() {
             cacheDir = (getExternalFilesDir("youtube") ?: filesDir).also { it.mkdirs() },
             db = OsseDatabase.get(this),
             scope = serviceScope,
+            onCached = { streamUrl, localPath ->
+                // Background download finished: swap any track still streaming from the
+                // now-expiring CDN URL to the permanent local file, preserving position.
+                tracks.values.forEach { track ->
+                    val state = track.state.value
+                    val src = state.source
+                    if (src is AudioSource.YoutubeStream && src.youtubeUrl == streamUrl) {
+                        val position = state.positionMs
+                        val wasPlaying = state.isPlaying
+                        track.setSource(AudioSource.YoutubeDownloaded(localPath), state.title)
+                        if (position > 0) track.seekTo(position)
+                        if (wasPlaying) track.play()
+                    }
+                }
+            },
         )
         binder.addTrack(TrackId.PODCAST)
         binder.addTrack(TrackId.MUSIC)

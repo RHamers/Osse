@@ -1,10 +1,14 @@
 package com.rhamers.osse.player
 
+import android.content.Context
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.rhamers.osse.model.AudioSource
 import com.rhamers.osse.model.TrackId
 import com.rhamers.osse.model.TrackState
@@ -18,17 +22,32 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
-import android.content.Context
 import kotlinx.coroutines.launch
 
 class TrackPlayer(context: Context, val trackId: TrackId) {
 
     internal val player: ExoPlayer = ExoPlayer.Builder(context)
+        .setMediaSourceFactory(
+            // YouTube CDN returns 403 when ExoPlayer's default "ExoPlayer/..." User-Agent
+            // is used. A browser-like UA is accepted by the CDN for the signed URLs that
+            // kkdai/youtube extracts.
+            DefaultMediaSourceFactory(
+                DefaultDataSource.Factory(
+                    context,
+                    DefaultHttpDataSource.Factory()
+                        .setUserAgent(
+                            "Mozilla/5.0 (Linux; Android 14) " +
+                            "AppleWebKit/537.36 (KHTML, like Gecko) " +
+                            "Chrome/124.0.0.0 Mobile Safari/537.36"
+                        )
+                )
+            )
+        )
         .setAudioAttributes(
             AudioAttributes.Builder().setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(),
             /* handleAudioFocus= */ false
         )
-        .setWakeMode(C.WAKE_MODE_LOCAL)
+        .setWakeMode(C.WAKE_MODE_NETWORK)
         .build()
 
     var onEnded: (() -> Unit)? = null
@@ -92,6 +111,11 @@ class TrackPlayer(context: Context, val trackId: TrackId) {
     }
 
     fun play() {
+        when (player.playbackState) {
+            Player.STATE_IDLE -> player.prepare()
+            Player.STATE_ENDED -> player.seekTo(0)
+            else -> Unit
+        }
         player.play()
     }
 

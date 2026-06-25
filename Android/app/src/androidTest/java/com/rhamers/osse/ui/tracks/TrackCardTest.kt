@@ -207,6 +207,21 @@ class TrackCardTest {
     }
 
     @Test
+    fun volumeAndSpeedSlidersVisibleWhilePositionKnown() {
+        // When duration is known the position slider appears, making the card content taller.
+        // Without verticalScroll on the inner Column the card (constrained by weight(1f)) clips
+        // the overflow and the volume/speed rows become invisible. This is a regression test.
+        setCard(TrackState(
+            source = AudioSource.RssFeed("https://example.com/ep.mp3"),
+            isPlaying = true,
+            durationMs = 3_600_000L,
+            positionMs = 60_000L,
+        ))
+        composeRule.onNodeWithText("100%").assertIsDisplayed()
+        composeRule.onNodeWithTag("speed_slider").assertIsDisplayed()
+    }
+
+    @Test
     fun sourceDropdownButtonIsDisplayed() {
         setCard(TrackState())
         composeRule.onNodeWithContentDescription("Select source").assertIsDisplayed()
