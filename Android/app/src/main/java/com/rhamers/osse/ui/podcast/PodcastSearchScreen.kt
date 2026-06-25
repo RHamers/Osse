@@ -28,8 +28,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -51,11 +53,24 @@ fun PodcastSearchScreen(
     onPodcastClick: (Podcast) -> Unit,
     onImportOpml: () -> Unit = {},
     onExportOpml: () -> Unit = {},
+    snackbarHostState: SnackbarHostState? = null,
     contentPadding: PaddingValues = PaddingValues()
 ) {
     val subscriptions by viewModel.subscriptions.collectAsState()
     val searchState by viewModel.searchState.collectAsState()
+    val importResult by viewModel.importResult.collectAsState()
     val keyboard = LocalSoftwareKeyboardController.current
+
+    LaunchedEffect(importResult) {
+        val result = importResult ?: return@LaunchedEffect
+        val msg = when (result) {
+            is OpmlResult.Success ->
+                if (result.count == 1) "1 podcast imported" else "${result.count} podcasts imported"
+            is OpmlResult.Error -> result.message
+        }
+        snackbarHostState?.showSnackbar(msg)
+        viewModel.clearImportResult()
+    }
 
     var query by remember { mutableStateOf("") }
 

@@ -59,5 +59,14 @@ class FakePodcastRepository : PodcastRepository {
     override suspend fun markEpisodeCompleted(guid: String) { completedGuids += guid }
 
     val importedUrls = mutableListOf<String>()
-    override suspend fun importOpml(feedUrls: List<String>) { importedUrls += feedUrls }
+    var importError: Exception? = null
+    override suspend fun importOpml(feedUrls: List<String>) {
+        importError?.let { throw it }
+        importedUrls += feedUrls
+    }
+
+    var lastDefaultSpeed: Pair<String, Float>? = null
+    override suspend fun setDefaultSpeed(feedUrl: String, speed: Float) {
+        lastDefaultSpeed = feedUrl to speed
+    }
 }

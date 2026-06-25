@@ -6,5 +6,6 @@ data class Podcast(
     val artworkUrl: String?,
     val description: String?,
     val autoQueue: Boolean = true,
-    val subscribedAt: Long = 0L
+    val subscribedAt: Long = 0L,
+    val defaultSpeed: Float = 1.0f,
 )

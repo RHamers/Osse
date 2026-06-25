@@ -14,6 +14,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -65,6 +66,7 @@ class MultiTrackService : MediaSessionService() {
                     val db = OsseDatabase.get(this@MultiTrackService)
                     db.episodeDao().getByEnclosureUrl(enclosureUrl)?.let { ep ->
                         db.episodeDao().setCompleted(ep.guid, true)
+                        db.episodeDao().updatePosition(ep.guid, 0L)
                     }
                     db.queueItemDao().deleteById(itemId)
                 }
@@ -97,6 +99,25 @@ class MultiTrackService : MediaSessionService() {
         )
         binder.addTrack(TrackId.PODCAST)
         binder.addTrack(TrackId.MUSIC)
+        startPositionSaver()
+    }
+
+    private fun startPositionSaver() {
+        serviceScope.launch {
+            val db = OsseDatabase.get(this@MultiTrackService)
+            while (true) {
+                delay(10_000)
+                val track = tracks[TrackId.PODCAST] ?: continue
+                val state = track.state.value
+                if (!state.isPlaying) continue
+                val url = (state.source as? AudioSource.RssFeed)?.enclosureUrl ?: continue
+                if (state.positionMs <= 0) continue
+                withContext(Dispatchers.IO) {
+                    val entity = db.episodeDao().getByEnclosureUrl(url) ?: return@withContext
+                    if (!entity.completed) db.episodeDao().updatePosition(entity.guid, state.positionMs)
+                }
+            }
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? {
@@ -128,6 +149,7 @@ class MultiTrackService : MediaSessionService() {
             withContext(Dispatchers.IO) {
                 db.episodeDao().getByEnclosureUrl(currentUrl)?.let { ep ->
                     db.episodeDao().setCompleted(ep.guid, true)
+                    db.episodeDao().updatePosition(ep.guid, 0L)
                     db.queueItemDao().deleteByGuid(ep.guid)
                 }
             }

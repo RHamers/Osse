@@ -23,4 +23,7 @@ interface PodcastDao {
 
     @Query("UPDATE podcasts SET autoQueue = :autoQueue WHERE feedUrl = :feedUrl")
     suspend fun setAutoQueue(feedUrl: String, autoQueue: Boolean)
+
+    @Query("UPDATE podcasts SET defaultSpeed = :speed WHERE feedUrl = :feedUrl")
+    suspend fun setDefaultSpeed(feedUrl: String, speed: Float)
 }

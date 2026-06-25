@@ -22,4 +22,5 @@ interface PodcastRepository {
     suspend fun toggleAutoQueue(feedUrl: String, autoQueue: Boolean)
     suspend fun markEpisodeCompleted(guid: String)
     suspend fun importOpml(feedUrls: List<String>)
+    suspend fun setDefaultSpeed(feedUrl: String, speed: Float)
 }

@@ -21,6 +21,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -103,7 +105,9 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             OsseTheme {
+                val snackbarHostState = remember { SnackbarHostState() }
                 Scaffold(
+                    snackbarHost = { SnackbarHost(snackbarHostState) },
                     bottomBar = {
                         NavigationBar {
                             NavigationBarItem(
@@ -156,6 +160,7 @@ class MainActivity : ComponentActivity() {
                             },
                             onImportOpml = { opmlPickerLauncher.launch(arrayOf("text/*", "application/xml", "*/*")) },
                             onExportOpml = { opmlExportLauncher.launch("osse-subscriptions.opml") },
+                            snackbarHostState = snackbarHostState,
                             contentPadding = contentPadding
                         )
 
@@ -167,6 +172,12 @@ class MainActivity : ComponentActivity() {
                             onAddToQueue = { episode -> podcastViewModel.addToQueue(episode.guid) },
                             onBack = { currentScreen = Screen.PodcastSearch },
                             onEpisodeClick = { episode -> currentScreen = Screen.EpisodeDetail(episode, screen) },
+                            onSetDefaultSpeed = { speed ->
+                                podcastViewModel.setDefaultSpeed(screen.feedUrl, speed)
+                            },
+                            onSetAutoQueue = { enabled ->
+                                podcastViewModel.toggleAutoQueue(screen.feedUrl, enabled)
+                            },
                             contentPadding = contentPadding
                         )
 
@@ -234,6 +245,9 @@ class MainActivity : ComponentActivity() {
         val b = binder ?: return
         val track = b.getTrack(pendingTrackId) ?: b.addTrack(pendingTrackId)
         track.setSource(AudioSource.RssFeed(episode.enclosureUrl), episode.title)
+        val podcast = podcastViewModel.subscriptions.value.find { it.feedUrl == episode.podcastFeedUrl }
+        podcast?.let { track.setSpeed(it.defaultSpeed) }
+        if (episode.positionMs > 0) track.seekTo(episode.positionMs)
         track.play()
         currentScreen = Screen.Tracks
     }
@@ -265,5 +279,16 @@ class MainActivity : ComponentActivity() {
         track.setSource(AudioSource.RssFeed(enclosureUrl), title)
         track.play()
         currentScreen = Screen.Tracks
+        lifecycleScope.launch {
+            val entity = withContext(Dispatchers.IO) {
+                OsseDatabase.get(this@MainActivity).episodeDao().getByEnclosureUrl(enclosureUrl)
+            }
+            val podcast = entity?.let { ep ->
+                podcastViewModel.subscriptions.value.find { it.feedUrl == ep.podcastFeedUrl }
+            }
+            val currentTrack = binder?.getTrack(TrackId.PODCAST) ?: return@launch
+            podcast?.let { currentTrack.setSpeed(it.defaultSpeed) }
+            entity?.let { if (it.positionMs > 0) currentTrack.seekTo(it.positionMs) }
+        }
     }
 }

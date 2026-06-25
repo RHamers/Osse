@@ -86,7 +86,8 @@ class DefaultPodcastRepository(
                     description = parsed.description ?: existing?.description,
                     addedAt = existing?.addedAt ?: System.currentTimeMillis(),
                     autoQueue = existing?.autoQueue ?: true,
-                    subscribedAt = existing?.subscribedAt ?: 0L
+                    subscribedAt = existing?.subscribedAt ?: 0L,
+                    defaultSpeed = existing?.defaultSpeed ?: 1.0f
                 )
             )
 
@@ -153,10 +154,14 @@ class DefaultPodcastRepository(
     override suspend fun importOpml(feedUrls: List<String>) {
         feedUrls.forEach { subscribeByUrl(it) }
     }
+
+    override suspend fun setDefaultSpeed(feedUrl: String, speed: Float) = withContext(Dispatchers.IO) {
+        podcastDao.setDefaultSpeed(feedUrl, speed.coerceIn(1.0f, 2.0f))
+    }
 }
 
 private fun PodcastEntity.toDomain() =
-    Podcast(feedUrl, title, artworkUrl, description, autoQueue, subscribedAt)
+    Podcast(feedUrl, title, artworkUrl, description, autoQueue, subscribedAt, defaultSpeed)
 
 private fun EpisodeEntity.toDomain() =
     Episode(guid, podcastFeedUrl, title, enclosureUrl, durationMs, showNotes, pubDateMs, positionMs, completed)

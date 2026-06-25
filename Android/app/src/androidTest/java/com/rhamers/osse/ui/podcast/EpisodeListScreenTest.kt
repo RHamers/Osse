@@ -1,8 +1,11 @@
 package com.rhamers.osse.ui.podcast
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -12,6 +15,7 @@ import com.rhamers.osse.data.repository.FakePodcastRepository
 import com.rhamers.osse.model.Episode
 import com.rhamers.osse.model.Podcast
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -166,7 +170,9 @@ class EpisodeListScreenTest {
 
     @Test fun autoQueueToggleShownAsOnByDefault() {
         setContent()
-        composeTestRule.onNodeWithContentDescription("Auto-queue on").assertIsDisplayed()
+        composeTestRule.onNodeWithContentDescription("Playback settings").performClick()
+        composeTestRule.onNodeWithText("Auto-queue new episodes").assertIsDisplayed()
+        composeTestRule.onNode(isToggleable()).assertIsOn()
     }
 
     @Test fun autoQueueToggleReflectsOffStateFromSubscription() {
@@ -174,17 +180,121 @@ class EpisodeListScreenTest {
             Podcast(feedUrl, "Test Podcast", null, null, autoQueue = false)
         )
         setContent()
-
         composeTestRule.waitUntil(2_000) {
-            composeTestRule.onAllNodes(hasContentDescription("Auto-queue off")).fetchSemanticsNodes().isNotEmpty()
+            composeTestRule.onAllNodes(hasContentDescription("Playback settings")).fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onNodeWithContentDescription("Auto-queue off").assertIsDisplayed()
+        composeTestRule.onNodeWithContentDescription("Playback settings").performClick()
+        composeTestRule.onNode(isToggleable()).assertIsOff()
     }
 
-    @Test fun clickingAutoQueueToggleCallsViewModelWithInvertedValue() {
-        setContent()
-        composeTestRule.onNodeWithContentDescription("Auto-queue on").performClick()
-        composeTestRule.waitUntil(2_000) { repo.lastAutoQueueToggle != null }
-        assertEquals(feedUrl to false, repo.lastAutoQueueToggle)
+    @Test fun savingDialogAfterTogglingAutoQueueCallsCallback() {
+        var savedAutoQueue: Boolean? = null
+        composeTestRule.setContent {
+            EpisodeListScreen(
+                feedUrl = feedUrl,
+                podcastTitle = "Test Podcast",
+                viewModel = viewModel,
+                onPlayEpisode = {},
+                onAddToQueue = {},
+                onBack = {},
+                onSetAutoQueue = { savedAutoQueue = it },
+            )
+        }
+        composeTestRule.onNodeWithContentDescription("Playback settings").performClick()
+        composeTestRule.onNode(isToggleable()).performClick()
+        composeTestRule.onNodeWithText("Save").performClick()
+        assertEquals(false, savedAutoQueue)
+    }
+
+    // ── playback speed settings ──────────────────────────────────────────────
+
+    @Test
+    fun settingsIconIsDisplayed() {
+        composeTestRule.setContent {
+            EpisodeListScreen(
+                feedUrl = "https://feed.com/rss",
+                podcastTitle = "Test Podcast",
+                viewModel = viewModel,
+                onPlayEpisode = {},
+                onAddToQueue = {},
+                onBack = {},
+            )
+        }
+        composeTestRule.onNodeWithContentDescription("Playback settings").assertIsDisplayed()
+    }
+
+    @Test
+    fun tappingSettingsIconOpensSpeedDialog() {
+        composeTestRule.setContent {
+            EpisodeListScreen(
+                feedUrl = "https://feed.com/rss",
+                podcastTitle = "Test Podcast",
+                viewModel = viewModel,
+                onPlayEpisode = {},
+                onAddToQueue = {},
+                onBack = {},
+            )
+        }
+        composeTestRule.onNodeWithContentDescription("Playback settings").performClick()
+        composeTestRule.onNodeWithText("Podcast Settings").assertIsDisplayed()
+    }
+
+    @Test
+    fun dialogPrePopulatesCurrentDefaultSpeed() {
+        repo.podcasts.value = listOf(
+            Podcast("https://feed.com/rss", "Test Podcast", null, null, defaultSpeed = 1.5f)
+        )
+        composeTestRule.setContent {
+            EpisodeListScreen(
+                feedUrl = "https://feed.com/rss",
+                podcastTitle = "Test Podcast",
+                viewModel = viewModel,
+                onPlayEpisode = {},
+                onAddToQueue = {},
+                onBack = {},
+            )
+        }
+        composeTestRule.onNodeWithContentDescription("Playback settings").performClick()
+        composeTestRule.onNodeWithText("Default speed: 1.5x", substring = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun savingDialogCallsOnSetDefaultSpeed() {
+        var savedSpeed: Float? = null
+        composeTestRule.setContent {
+            EpisodeListScreen(
+                feedUrl = "https://feed.com/rss",
+                podcastTitle = "Test Podcast",
+                viewModel = viewModel,
+                onPlayEpisode = {},
+                onAddToQueue = {},
+                onBack = {},
+                onSetDefaultSpeed = { speed -> savedSpeed = speed },
+            )
+        }
+        composeTestRule.onNodeWithContentDescription("Playback settings").performClick()
+        composeTestRule.onNodeWithText("Save").performClick()
+        assertNotNull(savedSpeed)
+        assertEquals(1.0f, savedSpeed!!, 0.001f)
+    }
+
+    @Test
+    fun cancelDismissesDialogWithoutCallingCallback() {
+        var called = false
+        composeTestRule.setContent {
+            EpisodeListScreen(
+                feedUrl = "https://feed.com/rss",
+                podcastTitle = "Test Podcast",
+                viewModel = viewModel,
+                onPlayEpisode = {},
+                onAddToQueue = {},
+                onBack = {},
+                onSetDefaultSpeed = { called = true },
+            )
+        }
+        composeTestRule.onNodeWithContentDescription("Playback settings").performClick()
+        composeTestRule.onNodeWithText("Cancel").performClick()
+        composeTestRule.onNodeWithText("Podcast Settings").assertDoesNotExist()
+        assertFalse(called)
     }
 }

@@ -11,5 +11,6 @@ data class PodcastEntity(
     val description: String?,
     val addedAt: Long = System.currentTimeMillis(),
     val autoQueue: Boolean = true,
-    val subscribedAt: Long = 0L
+    val subscribedAt: Long = 0L,
+    val defaultSpeed: Float = 1.0f,
 )

@@ -27,6 +27,11 @@ sealed class SearchState {
     data class Error(val message: String) : SearchState()
 }
 
+sealed class OpmlResult {
+    data class Success(val count: Int) : OpmlResult()
+    data class Error(val message: String) : OpmlResult()
+}
+
 class PodcastViewModel(private val repo: PodcastRepository) : ViewModel() {
 
     val subscriptions: StateFlow<List<Podcast>> = repo.observePodcasts()
@@ -37,6 +42,11 @@ class PodcastViewModel(private val repo: PodcastRepository) : ViewModel() {
 
     private val _searchState = MutableStateFlow<SearchState>(SearchState.Idle)
     val searchState: StateFlow<SearchState> = _searchState.asStateFlow()
+
+    private val _importResult = MutableStateFlow<OpmlResult?>(null)
+    val importResult: StateFlow<OpmlResult?> = _importResult.asStateFlow()
+
+    fun clearImportResult() { _importResult.value = null }
 
     private val _isRefreshing = MutableStateFlow(false)
     val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
@@ -108,12 +118,21 @@ class PodcastViewModel(private val repo: PodcastRepository) : ViewModel() {
         stream.writer().use { it.write(opml) }
     }
 
+    fun setDefaultSpeed(feedUrl: String, speed: Float) {
+        viewModelScope.launch {
+            try { repo.setDefaultSpeed(feedUrl, speed) } catch (_: Exception) {}
+        }
+    }
+
     fun importOpml(stream: InputStream) {
         viewModelScope.launch {
             try {
                 val urls = OpmlParser.parse(stream)
                 repo.importOpml(urls)
-            } catch (_: Exception) {}
+                _importResult.value = OpmlResult.Success(urls.size)
+            } catch (e: Exception) {
+                _importResult.value = OpmlResult.Error(e.message ?: "Import failed")
+            }
         }
     }
 

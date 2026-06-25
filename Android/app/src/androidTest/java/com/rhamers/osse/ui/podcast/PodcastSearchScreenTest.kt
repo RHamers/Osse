@@ -1,6 +1,10 @@
 package com.rhamers.osse.ui.podcast
 
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -9,8 +13,10 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.rhamers.osse.data.api.PodcastIndexFeed
 import com.rhamers.osse.data.repository.FakePodcastRepository
 import com.rhamers.osse.model.Podcast
+import com.rhamers.osse.ui.theme.OsseTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -118,6 +124,81 @@ class PodcastSearchScreenTest {
             ).fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule.onNodeWithText("Network unreachable").assertIsDisplayed()
+    }
+
+    @Test fun importOpmlButtonTriggersCallback() {
+        var triggered = false
+        composeTestRule.setContent {
+            PodcastSearchScreen(viewModel, onPodcastClick = {}, onImportOpml = { triggered = true })
+        }
+        composeTestRule.onNodeWithContentDescription("Import OPML").performClick()
+        assertTrue(triggered)
+    }
+
+    @Test fun exportOpmlButtonTriggersCallback() {
+        var triggered = false
+        composeTestRule.setContent {
+            PodcastSearchScreen(viewModel, onPodcastClick = {}, onExportOpml = { triggered = true })
+        }
+        composeTestRule.onNodeWithContentDescription("Export OPML").performClick()
+        assertTrue(triggered)
+    }
+
+    @Test fun importSuccessShowsSnackbar() {
+        val snackbarHostState = SnackbarHostState()
+        val opml = """<?xml version="1.0"?><opml version="1.0"><body>
+            <outline xmlUrl="https://feed1.com/rss"/>
+            <outline xmlUrl="https://feed2.com/rss"/>
+            <outline xmlUrl="https://feed3.com/rss"/>
+        </body></opml>"""
+
+        composeTestRule.setContent {
+            OsseTheme {
+                Scaffold(snackbarHost = { SnackbarHost(snackbarHostState) }) { padding ->
+                    PodcastSearchScreen(
+                        viewModel = viewModel,
+                        onPodcastClick = {},
+                        snackbarHostState = snackbarHostState,
+                        contentPadding = padding,
+                    )
+                }
+            }
+        }
+
+        composeTestRule.runOnUiThread { viewModel.importOpml(opml.byteInputStream()) }
+
+        composeTestRule.waitUntil(3_000) {
+            composeTestRule.onAllNodes(hasText("3 podcasts imported")).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithText("3 podcasts imported").assertIsDisplayed()
+    }
+
+    @Test fun importErrorShowsSnackbar() {
+        val snackbarHostState = SnackbarHostState()
+        repo.importError = RuntimeException("Import failed")
+        val opml = """<?xml version="1.0"?><opml version="1.0"><body>
+            <outline xmlUrl="https://feed1.com/rss"/>
+        </body></opml>"""
+
+        composeTestRule.setContent {
+            OsseTheme {
+                Scaffold(snackbarHost = { SnackbarHost(snackbarHostState) }) { padding ->
+                    PodcastSearchScreen(
+                        viewModel = viewModel,
+                        onPodcastClick = {},
+                        snackbarHostState = snackbarHostState,
+                        contentPadding = padding,
+                    )
+                }
+            }
+        }
+
+        composeTestRule.runOnUiThread { viewModel.importOpml(opml.byteInputStream()) }
+
+        composeTestRule.waitUntil(3_000) {
+            composeTestRule.onAllNodes(hasText("Import failed")).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithText("Import failed").assertIsDisplayed()
     }
 }
 
