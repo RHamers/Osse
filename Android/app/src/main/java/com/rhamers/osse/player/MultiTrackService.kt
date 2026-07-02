@@ -1,8 +1,16 @@
 package com.rhamers.osse.player
 
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.os.Binder
+import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import androidx.core.content.ContextCompat
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.rhamers.osse.data.db.OsseDatabase
@@ -29,6 +37,82 @@ class MultiTrackService : MediaSessionService() {
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private lateinit var cacheManager: YoutubeCacheManager
 
+    private val audioManager: AudioManager by lazy {
+        getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    }
+
+    // Tracks which track IDs were playing when a transient focus loss occurred,
+    // so we only resume those (not tracks the user had manually paused).
+    private val pausedByFocusLoss = mutableSetOf<TrackId>()
+
+    // Holds the pending AudioFocusRequest on API 26+ so we can abandon it later.
+    private var audioFocusRequestO: AudioFocusRequest? = null
+
+    private val audioFocusListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
+        when (focusChange) {
+            AudioManager.AUDIOFOCUS_LOSS -> {
+                // Permanent loss (e.g. another music app takes over): pause everything
+                // and do NOT auto-resume — the user needs to press play again.
+                tracks.values.forEach { it.pause() }
+                pausedByFocusLoss.clear()
+            }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                // Transient loss (phone call, navigation prompt, BT connection sound):
+                // pause whichever tracks are currently playing and remember them so we
+                // can resume when focus returns.
+                tracks.entries
+                    .filter { (_, player) -> player.player.playWhenReady }
+                    .forEach { (id, player) ->
+                        player.pause()
+                        pausedByFocusLoss += id
+                    }
+            }
+            AudioManager.AUDIOFOCUS_GAIN -> {
+                // Focus returned after a transient loss — resume the tracks we paused.
+                pausedByFocusLoss.forEach { id -> tracks[id]?.play() }
+                pausedByFocusLoss.clear()
+            }
+        }
+    }
+
+    // Pauses all tracks when headphones are unplugged or a BT device disconnects,
+    // preventing audio from blasting through the speaker unexpectedly.
+    private val noisyReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) {
+                tracks.values.forEach { it.pause() }
+            }
+        }
+    }
+
+    private fun requestAudioFocus() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (audioFocusRequestO == null) {
+                audioFocusRequestO = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                    .setOnAudioFocusChangeListener(audioFocusListener, Handler(mainLooper))
+                    .build()
+            }
+            audioManager.requestAudioFocus(audioFocusRequestO!!)
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager.requestAudioFocus(
+                audioFocusListener,
+                AudioManager.STREAM_MUSIC,
+                AudioManager.AUDIOFOCUS_GAIN,
+            )
+        }
+    }
+
+    private fun abandonAudioFocus() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            audioFocusRequestO?.let { audioManager.abandonAudioFocusRequest(it) }
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager.abandonAudioFocus(audioFocusListener)
+        }
+    }
+
     inner class LocalBinder : Binder() {
         val activeTrackIds: StateFlow<List<TrackId>> = _activeTrackIds.asStateFlow()
         val cacheManager: YoutubeCacheManager get() = this@MultiTrackService.cacheManager
@@ -40,6 +124,7 @@ class MultiTrackService : MediaSessionService() {
             val player = TrackPlayer(this@MultiTrackService, id)
             tracks[id] = player
             _activeTrackIds.value = _activeTrackIds.value + id
+            player.onPlayRequested = { requestAudioFocus() }
             if (id == TrackId.PODCAST && mediaSession == null) {
                 mediaSession = MediaSession.Builder(this@MultiTrackService, player.player).build()
                 player.onEnded = { serviceScope.launch { autoAdvance() } }
@@ -84,6 +169,18 @@ class MultiTrackService : MediaSessionService() {
             tracks.values.forEach { it.release() }
             tracks.clear()
             _activeTrackIds.value = emptyList()
+            pausedByFocusLoss.clear()
+        }
+
+        fun simulateAudioFocusChange(focusChange: Int) {
+            audioFocusListener.onAudioFocusChange(focusChange)
+        }
+
+        fun simulateBecomingNoisy() {
+            noisyReceiver.onReceive(
+                this@MultiTrackService,
+                Intent(AudioManager.ACTION_AUDIO_BECOMING_NOISY),
+            )
         }
     }
 
@@ -91,6 +188,12 @@ class MultiTrackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
+        ContextCompat.registerReceiver(
+            this,
+            noisyReceiver,
+            IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
         cacheManager = DefaultYoutubeCacheManager(
             extractor = YoutubeAudio,
             cacheDir = (getExternalFilesDir("youtube") ?: filesDir).also { it.mkdirs() },
@@ -145,6 +248,8 @@ class MultiTrackService : MediaSessionService() {
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession
 
     override fun onDestroy() {
+        unregisterReceiver(noisyReceiver)
+        abandonAudioFocus()
         serviceScope.cancel()
         mediaSession?.release()
         mediaSession = null

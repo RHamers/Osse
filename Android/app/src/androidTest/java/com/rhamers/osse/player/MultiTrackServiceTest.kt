@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.media.AudioManager
 import android.os.IBinder
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -207,6 +208,113 @@ class MultiTrackServiceTest {
         val guids = runBlocking { db.queueItemDao().getAllGuids() }
         assertFalse("ep1 should be removed from queue", guids.contains("ep1"))
         assertTrue("ep2 should still be in queue", guids.contains("ep2"))
+    }
+
+    @Test
+    fun audioBecomingNoisyPausesPodcastTrack() {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).apply {
+                setSource(AudioSource.RssFeed("https://example.com/ep.mp3"))
+                play()
+            }
+            binder.simulateBecomingNoisy()
+        }
+        var playWhenReady = true
+        instrumentation.runOnMainSync {
+            playWhenReady = binder.getTrack(TrackId.PODCAST)!!.player.playWhenReady
+        }
+        assertFalse("podcast track should pause when audio becomes noisy", playWhenReady)
+    }
+
+    @Test
+    fun audioBecomingNoisyPausesMusicTrack() {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST)
+            binder.addTrack(TrackId.MUSIC).apply {
+                setSource(AudioSource.RssFeed("https://example.com/music.mp3"))
+                play()
+            }
+            binder.simulateBecomingNoisy()
+        }
+        var playWhenReady = true
+        instrumentation.runOnMainSync {
+            playWhenReady = binder.getTrack(TrackId.MUSIC)!!.player.playWhenReady
+        }
+        assertFalse("music track should pause when audio becomes noisy", playWhenReady)
+    }
+
+    @Test
+    fun audioFocusTransientLossPausesPlayingTrack() {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).apply {
+                setSource(AudioSource.RssFeed("https://example.com/ep.mp3"))
+                play()
+            }
+            binder.simulateAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+        }
+        var playWhenReady = true
+        instrumentation.runOnMainSync {
+            playWhenReady = binder.getTrack(TrackId.PODCAST)!!.player.playWhenReady
+        }
+        assertFalse("podcast should pause on transient audio focus loss", playWhenReady)
+    }
+
+    @Test
+    fun audioFocusGainAfterTransientLossResumesPlayback() {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).apply {
+                setSource(AudioSource.RssFeed("https://example.com/ep.mp3"))
+                play()
+            }
+            binder.simulateAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+            binder.simulateAudioFocusChange(AudioManager.AUDIOFOCUS_GAIN)
+        }
+        var playWhenReady = false
+        instrumentation.runOnMainSync {
+            playWhenReady = binder.getTrack(TrackId.PODCAST)!!.player.playWhenReady
+        }
+        assertTrue("podcast should resume when focus returns after transient loss", playWhenReady)
+    }
+
+    @Test
+    fun audioFocusPermanentLossDoesNotAutoResume() {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).apply {
+                setSource(AudioSource.RssFeed("https://example.com/ep.mp3"))
+                play()
+            }
+            binder.simulateAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS)
+            binder.simulateAudioFocusChange(AudioManager.AUDIOFOCUS_GAIN)
+        }
+        var playWhenReady = false
+        instrumentation.runOnMainSync {
+            playWhenReady = binder.getTrack(TrackId.PODCAST)!!.player.playWhenReady
+        }
+        assertFalse("podcast should not auto-resume after permanent focus loss", playWhenReady)
+    }
+
+    @Test
+    fun audioFocusTransientLossOnlyResumesTracksThatWerePlaying() {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).apply {
+                setSource(AudioSource.RssFeed("https://example.com/ep.mp3"))
+                // deliberately NOT calling play() — user had it paused
+            }
+            binder.addTrack(TrackId.MUSIC).apply {
+                setSource(AudioSource.RssFeed("https://example.com/music.mp3"))
+                play()
+            }
+            binder.simulateAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+            binder.simulateAudioFocusChange(AudioManager.AUDIOFOCUS_GAIN)
+        }
+        var podcastPlaying = false
+        var musicPlaying = false
+        instrumentation.runOnMainSync {
+            podcastPlaying = binder.getTrack(TrackId.PODCAST)!!.player.playWhenReady
+            musicPlaying  = binder.getTrack(TrackId.MUSIC)!!.player.playWhenReady
+        }
+        assertFalse("podcast was paused before focus loss — should stay paused", podcastPlaying)
+        assertTrue("music was playing before focus loss — should resume", musicPlaying)
     }
 
     @Test

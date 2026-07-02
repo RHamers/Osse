@@ -125,4 +125,19 @@ class TrackPlayerTest {
         assertNotNull(player.player)
         assertFalse(player.state.value.isPlaying)
     }
+
+    @Test
+    fun playInvokesOnPlayRequestedCallback() {
+        var invoked = false
+        player.onPlayRequested = { invoked = true }
+        player.play()
+        assertTrue(invoked)
+    }
+
+    @Test
+    fun playWithNoCallbackDoesNotThrow() {
+        player.onPlayRequested = null
+        player.play()
+        assertFalse(player.state.value.isPlaying)
+    }
 }

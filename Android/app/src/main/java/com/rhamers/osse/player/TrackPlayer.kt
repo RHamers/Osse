@@ -51,6 +51,7 @@ class TrackPlayer(context: Context, val trackId: TrackId) {
         .build()
 
     var onEnded: (() -> Unit)? = null
+    var onPlayRequested: (() -> Unit)? = null
 
     private val _state = MutableStateFlow(TrackState())
     val state: StateFlow<TrackState> = _state.asStateFlow()
@@ -111,6 +112,7 @@ class TrackPlayer(context: Context, val trackId: TrackId) {
     }
 
     fun play() {
+        onPlayRequested?.invoke()
         when (player.playbackState) {
             Player.STATE_IDLE -> player.prepare()
             Player.STATE_ENDED -> player.seekTo(0)
