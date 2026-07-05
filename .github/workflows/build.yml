@@ -35,18 +35,16 @@ jobs:
           restore-keys: ${{ runner.os }}-gradle-
 
       - name: Install NDK r23c
-        run: echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;23.2.8568313"
+        run: |
+          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;23.2.8568313"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/23.2.8568313" >> "$GITHUB_ENV"
 
       - name: Install gomobile
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/23.2.8568313
         run: |
           go install golang.org/x/mobile/cmd/gomobile@latest
           gomobile init
 
       - name: Build (AAR + debug + release APKs)
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/23.2.8568313
         run: ./build.sh --release
 
       - name: Upload debug APK
