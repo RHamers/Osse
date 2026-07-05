@@ -35,23 +35,19 @@ jobs:
           restore-keys: ${{ runner.os }}-gradle-
 
       - name: Install NDK r23c
-        run: echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;23.2.8568313"
+        run: |
+          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;23.2.8568313"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/23.2.8568313" >> "$GITHUB_ENV"
 
       - name: Install gomobile
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/23.2.8568313
         run: |
           go install golang.org/x/mobile/cmd/gomobile@latest
           gomobile init
 
       - name: Build AAR
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/23.2.8568313
         run: ./build.sh --aar-only
 
       - name: Run unit tests
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/23.2.8568313
         run: cd Android && ./gradlew :app:testDebugUnitTest
 
   instrumented-tests:
@@ -83,18 +79,16 @@ jobs:
           restore-keys: ${{ runner.os }}-gradle-
 
       - name: Install NDK r23c
-        run: echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;23.2.8568313"
+        run: |
+          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;23.2.8568313"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/23.2.8568313" >> "$GITHUB_ENV"
 
       - name: Install gomobile
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/23.2.8568313
         run: |
           go install golang.org/x/mobile/cmd/gomobile@latest
           gomobile init
 
       - name: Build AAR
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/23.2.8568313
         run: ./build.sh --aar-only
 
       - name: Enable KVM
@@ -105,8 +99,6 @@ jobs:
 
       - name: Run instrumented tests
         uses: reactivecircus/android-emulator-runner@v2
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/23.2.8568313
         with:
           api-level: 34
           arch: x86_64
