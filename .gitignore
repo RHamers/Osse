@@ -30,8 +30,10 @@ proguard/
 
 # Generated AAR / JAR (built artifacts, not source)
 # app/libs/ is excluded — pre-built AARs (e.g. ytaudio.aar) are committed there
+# gradle-wrapper.jar is excluded — required by ./gradlew, not a build artifact
 *.jar
 !app/libs/*.aar
+!Android/gradle/wrapper/gradle-wrapper.jar
 
 # Room generated schema exports (optional — remove if you want to track schema)
 # app/schemas/
