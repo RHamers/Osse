@@ -32,9 +32,10 @@ done 2026-07-07.
       so the Release workflow publishes a signed, installable APK instead of
       `app-release-unsigned.apk`.
 
-- [ ] **Remove `resume.txt` from git tracking.** It's a personal `claude --resume
-      <session-id>` shell note at the repo root, not project content. `git rm --cached
-      resume.txt` and add it to `.gitignore`.
+- [x] **Remove `resume.txt` from git tracking.** It had already been removed from tracking
+      in commit `f654a9d`. Added `resume.txt` to `.git/info/exclude` (local-only, not
+      `.gitignore` — it's a personal `claude --resume <session-id>` note, not project content
+      worth sharing with anyone else who clones the repo) so it won't get re-tracked.
 
 ---
 
