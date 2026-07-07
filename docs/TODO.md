@@ -15,11 +15,15 @@ done 2026-07-07.
       snackbar (shared `SnackbarHostState`), then clears it — same pattern as the existing
       OPML import result. Covered by new tests in `PodcastViewModelTest`.
 
-- [ ] **Add ProGuard/R8 keep rules for Gson model classes.** `proguard-rules.pro` has rules
-      for Media3/Room/Retrofit/`ytaudio.**` but nothing for Gson-deserialized classes
-      (`VideoSearchResult`, `PodcastIndexFeed`, etc. — see `YoutubeAudio.kt` and
-      `PodcastIndexApi.kt`). Without keep rules, R8 renames their fields in release builds and
-      JSON deserialization silently returns nulls — a release-only bug invisible in debug.
+- [x] **Add ProGuard/R8 keep rules for Gson model classes.** Added `-keep class
+      com.rhamers.osse.data.api.** { <fields>; }` and `-keep class
+      com.rhamers.osse.youtube.VideoSearchResult { <fields>; }` (plus the standard
+      `TypeToken` keep pair) to `proguard-rules.pro`. Verified by building `assembleRelease`
+      and inspecting `mapping.txt`: `PodcastIndexFeed`/`VideoSearchResult` have their getter
+      methods obfuscated but zero field-rename entries, while an unrelated class in the same
+      build (`YoutubeAudio$extractAudioUrl$1`) does have its fields renamed — confirming the
+      keep rule is what's preventing it, not an R8 default. `VideoSearchResult` had no
+      `@SerializedName` annotations at all, so it was fully exposed to this bug before the fix.
 
 - [ ] **Sign release builds with a real keystore.** Release APKs are currently unsigned
       (`app/build.gradle.kts` has no `signingConfig` for the `release` build type). Generate a
