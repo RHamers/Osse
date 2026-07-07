@@ -59,6 +59,22 @@ class PodcastDaoTest {
         assertEquals(1.0f, dao.getByUrl("https://feed2.com/rss")!!.defaultSpeed, 0.001f)
     }
 
+    @Test
+    fun `getAll returns every subscribed podcast`() = runBlocking {
+        dao.upsert(podcast("https://feed1.com/rss"))
+        dao.upsert(podcast("https://feed2.com/rss"))
+
+        val result = dao.getAll()
+
+        assertEquals(2, result.size)
+        assertEquals(setOf("https://feed1.com/rss", "https://feed2.com/rss"), result.map { it.feedUrl }.toSet())
+    }
+
+    @Test
+    fun `getAll returns empty list when no podcasts subscribed`() = runBlocking {
+        assertTrue(dao.getAll().isEmpty())
+    }
+
     private fun podcast(feedUrl: String) = PodcastEntity(
         feedUrl = feedUrl,
         title = "Test Podcast",

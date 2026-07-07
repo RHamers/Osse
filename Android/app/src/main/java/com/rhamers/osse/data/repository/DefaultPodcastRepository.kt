@@ -113,6 +113,16 @@ class DefaultPodcastRepository(
         }
     }
 
+    override suspend fun refreshAllPodcasts() = withContext(Dispatchers.IO) {
+        podcastDao.getAll().forEach { podcast ->
+            try {
+                refreshEpisodes(podcast.feedUrl)
+            } catch (_: Exception) {
+                // One feed failing (network error, malformed RSS) shouldn't block the rest.
+            }
+        }
+    }
+
     override suspend fun unsubscribe(feedUrl: String) {
         podcastDao.getByUrl(feedUrl)?.let { podcastDao.delete(it) }
     }
