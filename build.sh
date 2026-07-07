@@ -87,7 +87,7 @@ if $BUILD_APK; then
     if $BUILD_RELEASE; then
         step "Building release APK"
         ./gradlew :app:assembleRelease
-        ok "app/build/outputs/apk/release/app-release.apk"
+        ok "app/build/outputs/apk/release/app-release-unsigned.apk"
     fi
 
     cd "$SCRIPT_DIR"
