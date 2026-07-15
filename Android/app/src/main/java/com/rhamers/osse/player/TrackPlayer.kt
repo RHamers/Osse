@@ -1,8 +1,10 @@
 package com.rhamers.osse.player
 
 import android.content.Context
+import android.util.Log
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultDataSource
@@ -24,7 +26,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
-class TrackPlayer(context: Context, val trackId: TrackId) {
+class TrackPlayer(
+    context: Context,
+    val trackId: TrackId,
+    private val retryDelaysMs: LongArray = DEFAULT_RETRY_DELAYS_MS,
+) {
 
     internal val player: ExoPlayer = ExoPlayer.Builder(context)
         .setMediaSourceFactory(
@@ -52,11 +58,15 @@ class TrackPlayer(context: Context, val trackId: TrackId) {
 
     var onEnded: (() -> Unit)? = null
     var onPlayRequested: (() -> Unit)? = null
+    var onPlaybackError: ((PlaybackException) -> Unit)? = null
 
     private val _state = MutableStateFlow(TrackState())
     val state: StateFlow<TrackState> = _state.asStateFlow()
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+
+    private var retryAttempt = 0
+    internal val currentRetryAttempt: Int get() = retryAttempt
 
     init {
         player.addListener(object : Player.Listener {
@@ -65,6 +75,17 @@ class TrackPlayer(context: Context, val trackId: TrackId) {
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
+                when (playbackState) {
+                    Player.STATE_BUFFERING ->
+                        Log.d(TAG, "Track $trackId buffering at position=${player.currentPosition}ms")
+                    Player.STATE_READY -> {
+                        if (retryAttempt > 0) {
+                            Log.i(TAG, "Track $trackId recovered after $retryAttempt retry attempt(s)")
+                        }
+                        retryAttempt = 0
+                    }
+                    else -> Unit
+                }
                 _state.value = _state.value.copy(
                     isLoading = playbackState == Player.STATE_BUFFERING,
                     durationMs = player.duration.coerceAtLeast(0L)
@@ -78,6 +99,10 @@ class TrackPlayer(context: Context, val trackId: TrackId) {
                 reason: Int
             ) {
                 _state.value = _state.value.copy(positionMs = newPosition.positionMs)
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                handlePlayerError(error)
             }
         })
 
@@ -143,5 +168,34 @@ class TrackPlayer(context: Context, val trackId: TrackId) {
     fun release() {
         scope.cancel()
         player.release()
+    }
+
+    // YouTube CDN streams have been observed to drop mid-playback (a hard pause every
+    // few minutes), surfaced by ExoPlayer as a PlaybackException that falls back to
+    // STATE_IDLE. Without recovery, the user has to manually tap play again. Retry with
+    // backoff from the last known position before giving up.
+    internal fun handlePlayerError(error: PlaybackException) {
+        Log.w(TAG, "Track $trackId playback error (source=${_state.value.source}): ${error.errorCodeName}", error)
+        onPlaybackError?.invoke(error)
+
+        if (retryAttempt >= retryDelaysMs.size) {
+            Log.w(TAG, "Track $trackId giving up after $retryAttempt retries")
+            return
+        }
+        val delayMs = retryDelaysMs[retryAttempt]
+        retryAttempt++
+        val resumePosition = player.currentPosition
+        val shouldResume = player.playWhenReady
+        scope.launch {
+            delay(delayMs)
+            player.seekTo(resumePosition)
+            player.prepare()
+            player.playWhenReady = shouldResume
+        }
+    }
+
+    companion object {
+        private const val TAG = "TrackPlayer"
+        private val DEFAULT_RETRY_DELAYS_MS = longArrayOf(2_000L, 5_000L, 10_000L)
     }
 }

@@ -15,18 +15,22 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Podcasts
 import androidx.compose.material.icons.filled.VideoLibrary
 import com.rhamers.osse.ui.youtube.YoutubeLibraryScreen
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -37,6 +41,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import com.rhamers.osse.data.db.OsseDatabase
 import com.rhamers.osse.data.repository.DefaultPodcastRepository
+import com.rhamers.osse.debug.LogExporter
 import com.rhamers.osse.model.AudioSource
 import com.rhamers.osse.model.Episode
 import com.rhamers.osse.model.TrackId
@@ -73,6 +78,7 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var podcastViewModel: PodcastViewModel
 
+    @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -131,6 +137,21 @@ class MainActivity : ComponentActivity() {
                     podcastViewModel.clearErrorMessage()
                 }
                 Scaffold(
+                    topBar = {
+                        TopAppBar(
+                            title = { Text("Ossë") },
+                            actions = {
+                                IconButton(onClick = {
+                                    lifecycleScope.launch {
+                                        val file = withContext(Dispatchers.IO) { LogExporter.export(this@MainActivity) }
+                                        snackbarHostState.showSnackbar("Logs exported to ${file.name}")
+                                    }
+                                }) {
+                                    Icon(Icons.Default.BugReport, contentDescription = "Export logs")
+                                }
+                            }
+                        )
+                    },
                     snackbarHost = { SnackbarHost(snackbarHostState) },
                     bottomBar = {
                         NavigationBar {
