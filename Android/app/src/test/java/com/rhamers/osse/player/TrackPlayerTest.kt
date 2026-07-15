@@ -1,5 +1,7 @@
 package com.rhamers.osse.player
 
+import android.os.Looper
+import androidx.media3.common.PlaybackException
 import androidx.test.core.app.ApplicationProvider
 import com.rhamers.osse.model.AudioSource
 import com.rhamers.osse.model.TrackId
@@ -9,6 +11,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
@@ -139,5 +142,75 @@ class TrackPlayerTest {
         player.onPlayRequested = null
         player.play()
         assertFalse(player.state.value.isPlaying)
+    }
+
+    @Test
+    fun playerErrorInvokesCallback() {
+        var received: PlaybackException? = null
+        player.onPlaybackError = { received = it }
+        val error = PlaybackException("network error", null, PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED)
+
+        player.handlePlayerError(error)
+
+        assertEquals(error, received)
+    }
+
+    @Test
+    fun playerErrorSchedulesRetryThatResumesPlayback() {
+        val retryingPlayer = TrackPlayer(
+            ApplicationProvider.getApplicationContext(),
+            TrackId.MUSIC,
+            retryDelaysMs = longArrayOf(0L),
+        )
+        retryingPlayer.setSource(AudioSource.RssFeed("https://example.com/episode.mp3"))
+        retryingPlayer.play()
+        val error = PlaybackException("network error", null, PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED)
+
+        retryingPlayer.handlePlayerError(error)
+        shadowOf(Looper.getMainLooper()).idle()
+
+        // The retry re-prepares and restores playWhenReady rather than leaving the
+        // track stuck paused, requiring the user to manually tap play again.
+        assertTrue(retryingPlayer.player.playWhenReady)
+        retryingPlayer.release()
+    }
+
+    @Test
+    fun playerErrorDoesNotResumeIfTrackWasPaused() {
+        val retryingPlayer = TrackPlayer(
+            ApplicationProvider.getApplicationContext(),
+            TrackId.MUSIC,
+            retryDelaysMs = longArrayOf(0L),
+        )
+        retryingPlayer.setSource(AudioSource.RssFeed("https://example.com/episode.mp3"))
+        // Never played — playWhenReady is false.
+        val error = PlaybackException("network error", null, PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED)
+
+        retryingPlayer.handlePlayerError(error)
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertFalse(retryingPlayer.player.playWhenReady)
+        retryingPlayer.release()
+    }
+
+    @Test
+    fun playerErrorGivesUpAfterExhaustingRetries() {
+        val retryingPlayer = TrackPlayer(
+            ApplicationProvider.getApplicationContext(),
+            TrackId.MUSIC,
+            retryDelaysMs = longArrayOf(0L),
+        )
+        val error = PlaybackException("network error", null, PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED)
+
+        retryingPlayer.handlePlayerError(error)
+        assertEquals(1, retryingPlayer.currentRetryAttempt)
+
+        // A second error exceeds the single configured retry attempt — must not throw
+        // and must not schedule another retry.
+        retryingPlayer.handlePlayerError(error)
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertEquals(1, retryingPlayer.currentRetryAttempt)
+        retryingPlayer.release()
     }
 }

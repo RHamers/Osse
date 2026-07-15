@@ -341,4 +341,98 @@ class MultiTrackServiceTest {
         val episode = runBlocking { db.episodeDao().getByGuid("ep1") }
         assertTrue("episode should be marked completed in DB", episode!!.completed)
     }
+
+    @Test
+    fun singleMediaButtonPressPlaysBothLoadedIdleTracks() {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).setSource(AudioSource.RssFeed("https://example.com/ep.mp3"))
+            binder.addTrack(TrackId.MUSIC).setSource(AudioSource.RssFeed("https://example.com/music.mp3"))
+            binder.simulateMediaButtonPress()
+        }
+        Thread.sleep(400)
+        instrumentation.runOnMainSync {}
+        var podcastPlaying = false
+        var musicPlaying = false
+        instrumentation.runOnMainSync {
+            podcastPlaying = binder.getTrack(TrackId.PODCAST)!!.player.playWhenReady
+            musicPlaying = binder.getTrack(TrackId.MUSIC)!!.player.playWhenReady
+        }
+        assertTrue("podcast should start playing on single press", podcastPlaying)
+        assertTrue("music should start playing on single press", musicPlaying)
+    }
+
+    @Test
+    fun singleMediaButtonPressPausesAllActiveTracksWhenAnyIsPlaying() {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).apply {
+                setSource(AudioSource.RssFeed("https://example.com/ep.mp3"))
+                play()
+            }
+            binder.addTrack(TrackId.MUSIC).apply {
+                setSource(AudioSource.RssFeed("https://example.com/music.mp3"))
+                // deliberately not playing — user paused music manually
+            }
+            binder.simulateMediaButtonPress()
+        }
+        Thread.sleep(400)
+        instrumentation.runOnMainSync {}
+        var podcastPlaying = true
+        var musicPlaying = true
+        instrumentation.runOnMainSync {
+            podcastPlaying = binder.getTrack(TrackId.PODCAST)!!.player.playWhenReady
+            musicPlaying = binder.getTrack(TrackId.MUSIC)!!.player.playWhenReady
+        }
+        assertFalse(
+            "podcast should pause too on single press, even though music was already paused",
+            podcastPlaying
+        )
+        assertFalse("music should remain paused, not flip to playing", musicPlaying)
+    }
+
+    @Test
+    fun doubleMediaButtonPressSeeksPodcastForward30SecondsWithoutTogglingPlayback() {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).apply {
+                setSource(AudioSource.RssFeed("https://example.com/ep.mp3"))
+                play()
+                seekTo(10_000L)
+            }
+            binder.addTrack(TrackId.MUSIC).apply {
+                setSource(AudioSource.RssFeed("https://example.com/music.mp3"))
+                play()
+            }
+            binder.simulateMediaButtonPress()
+            binder.simulateMediaButtonPress()
+        }
+        var podcastPosition = 0L
+        var podcastPlaying = false
+        var musicPlaying = false
+        instrumentation.runOnMainSync {
+            podcastPosition = binder.getTrack(TrackId.PODCAST)!!.state.value.positionMs
+            podcastPlaying = binder.getTrack(TrackId.PODCAST)!!.player.playWhenReady
+            musicPlaying = binder.getTrack(TrackId.MUSIC)!!.player.playWhenReady
+        }
+        assertEquals(40_000L, podcastPosition)
+        assertTrue("podcast should keep playing, only its position should change", podcastPlaying)
+        assertTrue("music should be unaffected by a double press", musicPlaying)
+    }
+
+    @Test
+    fun singleMediaButtonPressWithNoSourceLoadedDoesNotCrashOrPlay() {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST)
+            binder.addTrack(TrackId.MUSIC)
+            binder.simulateMediaButtonPress()
+        }
+        Thread.sleep(400)
+        instrumentation.runOnMainSync {}
+        var podcastPlaying = true
+        var musicPlaying = true
+        instrumentation.runOnMainSync {
+            podcastPlaying = binder.getTrack(TrackId.PODCAST)!!.player.playWhenReady
+            musicPlaying = binder.getTrack(TrackId.MUSIC)!!.player.playWhenReady
+        }
+        assertFalse("no source loaded — podcast should not start playing", podcastPlaying)
+        assertFalse("no source loaded — music should not start playing", musicPlaying)
+    }
 }

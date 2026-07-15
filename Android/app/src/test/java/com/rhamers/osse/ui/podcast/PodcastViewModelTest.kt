@@ -89,6 +89,12 @@ class PodcastViewModelTest {
         assertEquals("https://example.com/rss", repo.lastUnsubscribed)
     }
 
+    // ── startup auto-refresh ─────────────────────────────────────────────────
+
+    @Test fun `constructing the view model refreshes all podcasts once`() = runTest {
+        assertEquals(1, repo.refreshAllPodcastsCallCount)
+    }
+
     // ── refresh ──────────────────────────────────────────────────────────────
 
     @Test fun `refresh delegates to repo and clears isRefreshing`() = runTest {
@@ -96,6 +102,72 @@ class PodcastViewModelTest {
         viewModel.refresh("https://example.com/rss")
         assertFalse(viewModel.isRefreshing.value)
         assertEquals("https://example.com/rss", repo.lastRefreshed)
+    }
+
+    @Test fun `failed refresh sets errorMessage and still clears isRefreshing`() = runTest {
+        repo.refreshError = RuntimeException("network down")
+
+        viewModel.refresh("https://example.com/rss")
+
+        assertEquals("network down", viewModel.errorMessage.value)
+        assertFalse(viewModel.isRefreshing.value)
+    }
+
+    // ── error surfacing ──────────────────────────────────────────────────────
+
+    @Test fun `initial errorMessage is null`() {
+        assertNull(viewModel.errorMessage.value)
+    }
+
+    @Test fun `failed subscribe sets errorMessage`() = runTest {
+        repo.subscribeError = RuntimeException("boom")
+        viewModel.subscribe(PodcastIndexFeed(id = 1, title = "X", feedUrl = "url"))
+        assertEquals("boom", viewModel.errorMessage.value)
+    }
+
+    @Test fun `failed subscribeByUrl sets errorMessage`() = runTest {
+        repo.subscribeByUrlError = RuntimeException("bad url")
+        viewModel.subscribeByUrl("not-a-feed")
+        assertEquals("bad url", viewModel.errorMessage.value)
+    }
+
+    @Test fun `failed addToQueue sets errorMessage`() = runTest {
+        repo.addToQueueError = RuntimeException("db error")
+        viewModel.addToQueue("guid1")
+        assertEquals("db error", viewModel.errorMessage.value)
+    }
+
+    @Test fun `failed reorderQueue sets errorMessage`() = runTest {
+        repo.reorderQueueError = RuntimeException("db error")
+        viewModel.reorderQueue(emptyList())
+        assertEquals("db error", viewModel.errorMessage.value)
+    }
+
+    @Test fun `failed toggleAutoQueue sets errorMessage`() = runTest {
+        repo.toggleAutoQueueError = RuntimeException("db error")
+        viewModel.toggleAutoQueue("url", true)
+        assertEquals("db error", viewModel.errorMessage.value)
+    }
+
+    @Test fun `failed setDefaultSpeed sets errorMessage`() = runTest {
+        repo.setDefaultSpeedError = RuntimeException("db error")
+        viewModel.setDefaultSpeed("url", 1.5f)
+        assertEquals("db error", viewModel.errorMessage.value)
+    }
+
+    @Test fun `clearErrorMessage resets to null`() = runTest {
+        repo.subscribeError = RuntimeException("boom")
+        viewModel.subscribe(PodcastIndexFeed(id = 1, title = "X", feedUrl = "url"))
+        assertEquals("boom", viewModel.errorMessage.value)
+
+        viewModel.clearErrorMessage()
+
+        assertNull(viewModel.errorMessage.value)
+    }
+
+    @Test fun `successful subscribe does not set errorMessage`() = runTest {
+        viewModel.subscribe(PodcastIndexFeed(id = 1, title = "X", feedUrl = "url"))
+        assertNull(viewModel.errorMessage.value)
     }
 
     // ── subscriptions flow ───────────────────────────────────────────────────

@@ -12,6 +12,9 @@ interface PodcastDao {
     @Query("SELECT * FROM podcasts ORDER BY addedAt DESC")
     fun observeAll(): Flow<List<PodcastEntity>>
 
+    @Query("SELECT * FROM podcasts ORDER BY addedAt DESC")
+    suspend fun getAll(): List<PodcastEntity>
+
     @Query("SELECT * FROM podcasts WHERE feedUrl = :feedUrl")
     suspend fun getByUrl(feedUrl: String): PodcastEntity?
 

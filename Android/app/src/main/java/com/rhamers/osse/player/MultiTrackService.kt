@@ -10,6 +10,7 @@ import android.os.Binder
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
+import android.view.KeyEvent
 import androidx.core.content.ContextCompat
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
@@ -20,6 +21,7 @@ import com.rhamers.osse.player.DefaultYoutubeCacheManager
 import com.rhamers.osse.youtube.YoutubeAudio
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -113,6 +115,65 @@ class MultiTrackService : MediaSessionService() {
         }
     }
 
+    private var pendingPressJob: Job? = null
+
+    // Handles the earbud/headset media button. A single press toggles play/pause across
+    // every track that has a source loaded; two presses within DOUBLE_PRESS_WINDOW_MS
+    // fast-forward the podcast track 30 seconds instead, matching standard podcast-app
+    // double-tap-to-skip behavior. This replaces Media3's default handling, which would
+    // otherwise forward the event only to the podcast player the session is bound to.
+    private val mediaButtonCallback = object : MediaSession.Callback {
+        override fun onMediaButtonEvent(
+            session: MediaSession,
+            controllerInfo: MediaSession.ControllerInfo,
+            intent: Intent
+        ): Boolean {
+            val event = keyEventFromIntent(intent) ?: return false
+            return handleMediaButtonKeyEvent(event)
+        }
+    }
+
+    private fun keyEventFromIntent(intent: Intent): KeyEvent? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT)
+        }
+
+    private fun handleMediaButtonKeyEvent(event: KeyEvent): Boolean {
+        if (event.keyCode != KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE &&
+            event.keyCode != KeyEvent.KEYCODE_HEADSETHOOK
+        ) {
+            return false
+        }
+        // Only react to the initial press; ignore key-up and long-press auto-repeat.
+        if (event.action != KeyEvent.ACTION_DOWN || event.repeatCount != 0) return true
+
+        val pending = pendingPressJob
+        if (pending != null) {
+            pending.cancel()
+            pendingPressJob = null
+            tracks[TrackId.PODCAST]?.forward()
+        } else {
+            pendingPressJob = serviceScope.launch {
+                delay(DOUBLE_PRESS_WINDOW_MS)
+                pendingPressJob = null
+                toggleAllActiveTracks()
+            }
+        }
+        return true
+    }
+
+    private fun toggleAllActiveTracks() {
+        val active = tracks.values.filter { it.state.value.source != null }
+        if (active.any { it.player.playWhenReady }) {
+            active.forEach { it.pause() }
+        } else {
+            active.forEach { it.play() }
+        }
+    }
+
     inner class LocalBinder : Binder() {
         val activeTrackIds: StateFlow<List<TrackId>> = _activeTrackIds.asStateFlow()
         val cacheManager: YoutubeCacheManager get() = this@MultiTrackService.cacheManager
@@ -126,7 +187,9 @@ class MultiTrackService : MediaSessionService() {
             _activeTrackIds.value = _activeTrackIds.value + id
             player.onPlayRequested = { requestAudioFocus() }
             if (id == TrackId.PODCAST && mediaSession == null) {
-                mediaSession = MediaSession.Builder(this@MultiTrackService, player.player).build()
+                mediaSession = MediaSession.Builder(this@MultiTrackService, player.player)
+                    .setCallback(mediaButtonCallback)
+                    .build()
                 player.onEnded = { serviceScope.launch { autoAdvance() } }
             }
             return player
@@ -181,6 +244,10 @@ class MultiTrackService : MediaSessionService() {
                 this@MultiTrackService,
                 Intent(AudioManager.ACTION_AUDIO_BECOMING_NOISY),
             )
+        }
+
+        fun simulateMediaButtonPress() {
+            handleMediaButtonKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE))
         }
     }
 
@@ -284,5 +351,9 @@ class MultiTrackService : MediaSessionService() {
 
         track.setSource(AudioSource.RssFeed(episode.enclosureUrl), episode.title)
         track.play()
+    }
+
+    companion object {
+        private const val DOUBLE_PRESS_WINDOW_MS = 300L
     }
 }

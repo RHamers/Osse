@@ -19,11 +19,20 @@ class FakePodcastRepository : PodcastRepository {
     var lastSubscribedUrl: String? = null
     var lastUnsubscribed: String? = null
     var lastRefreshed: String? = null
+    var refreshAllPodcastsCallCount = 0
     val positionUpdates = mutableListOf<Pair<String, Long>>()
     val queuedGuids = mutableListOf<String>()
     val removedQueueIds = mutableListOf<Long>()
     var reorderedQueue: List<QueueItem>? = null
     var lastAutoQueueToggle: Pair<String, Boolean>? = null
+
+    var subscribeError: Exception? = null
+    var subscribeByUrlError: Exception? = null
+    var refreshError: Exception? = null
+    var addToQueueError: Exception? = null
+    var reorderQueueError: Exception? = null
+    var toggleAutoQueueError: Exception? = null
+    var setDefaultSpeedError: Exception? = null
 
     fun setEpisodes(feedUrl: String, episodes: List<Episode>) {
         episodesByFeed.getOrPut(feedUrl) { MutableStateFlow(emptyList()) }.value = episodes
@@ -41,17 +50,34 @@ class FakePodcastRepository : PodcastRepository {
         return searchResult
     }
 
-    override suspend fun subscribe(feed: PodcastIndexFeed) { lastSubscribed = feed }
-    override suspend fun subscribeByUrl(feedUrl: String) { lastSubscribedUrl = feedUrl }
-    override suspend fun refreshEpisodes(feedUrl: String) { lastRefreshed = feedUrl }
+    override suspend fun subscribe(feed: PodcastIndexFeed) {
+        subscribeError?.let { throw it }
+        lastSubscribed = feed
+    }
+    override suspend fun subscribeByUrl(feedUrl: String) {
+        subscribeByUrlError?.let { throw it }
+        lastSubscribedUrl = feedUrl
+    }
+    override suspend fun refreshEpisodes(feedUrl: String) {
+        refreshError?.let { throw it }
+        lastRefreshed = feedUrl
+    }
+    override suspend fun refreshAllPodcasts() { refreshAllPodcastsCallCount++ }
     override suspend fun unsubscribe(feedUrl: String) { lastUnsubscribed = feedUrl }
     override suspend fun updateEpisodePosition(guid: String, positionMs: Long) {
         positionUpdates += guid to positionMs
     }
-    override suspend fun addToQueue(episodeGuid: String) { queuedGuids += episodeGuid }
+    override suspend fun addToQueue(episodeGuid: String) {
+        addToQueueError?.let { throw it }
+        queuedGuids += episodeGuid
+    }
     override suspend fun removeFromQueue(id: Long) { removedQueueIds += id }
-    override suspend fun reorderQueue(items: List<QueueItem>) { reorderedQueue = items }
+    override suspend fun reorderQueue(items: List<QueueItem>) {
+        reorderQueueError?.let { throw it }
+        reorderedQueue = items
+    }
     override suspend fun toggleAutoQueue(feedUrl: String, autoQueue: Boolean) {
+        toggleAutoQueueError?.let { throw it }
         lastAutoQueueToggle = feedUrl to autoQueue
     }
 
@@ -67,6 +93,7 @@ class FakePodcastRepository : PodcastRepository {
 
     var lastDefaultSpeed: Pair<String, Float>? = null
     override suspend fun setDefaultSpeed(feedUrl: String, speed: Float) {
+        setDefaultSpeedError?.let { throw it }
         lastDefaultSpeed = feedUrl to speed
     }
 }

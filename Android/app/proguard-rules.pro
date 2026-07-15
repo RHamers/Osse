@@ -36,3 +36,13 @@
 
 # Keep gomobile-generated ytaudio bindings
 -keep class ytaudio.** { *; }
+
+# Keep Gson-(de)serialized model classes. Gson maps JSON keys to fields by reflection using
+# the field's name (falling back to it even when @SerializedName is present, if the annotation
+# were ever stripped) — without these rules R8 renames fields in release builds and every
+# field silently deserializes to its default value. VideoSearchResult in particular has no
+# @SerializedName annotations at all, so it depends entirely on its field names surviving.
+-keep,allowobfuscation,allowshrinking class com.google.gson.reflect.TypeToken
+-keep,allowobfuscation,allowshrinking class * extends com.google.gson.reflect.TypeToken
+-keep class com.rhamers.osse.data.api.** { <fields>; }
+-keep class com.rhamers.osse.youtube.VideoSearchResult { <fields>; }

@@ -34,6 +34,10 @@ sealed class OpmlResult {
 
 class PodcastViewModel(private val repo: PodcastRepository) : ViewModel() {
 
+    init {
+        viewModelScope.launch { repo.refreshAllPodcasts() }
+    }
+
     val subscriptions: StateFlow<List<Podcast>> = repo.observePodcasts()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -50,6 +54,11 @@ class PodcastViewModel(private val repo: PodcastRepository) : ViewModel() {
 
     private val _isRefreshing = MutableStateFlow(false)
     val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
+
+    private val _errorMessage = MutableStateFlow<String?>(null)
+    val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
+
+    fun clearErrorMessage() { _errorMessage.value = null }
 
     fun episodesFor(feedUrl: String): Flow<List<Episode>> = repo.observeEpisodes(feedUrl)
 
@@ -69,13 +78,17 @@ class PodcastViewModel(private val repo: PodcastRepository) : ViewModel() {
 
     fun subscribe(feed: PodcastIndexFeed) {
         viewModelScope.launch {
-            try { repo.subscribe(feed) } catch (_: Exception) {}
+            try { repo.subscribe(feed) } catch (e: Exception) {
+                _errorMessage.value = e.message ?: "Failed to subscribe"
+            }
         }
     }
 
     fun subscribeByUrl(feedUrl: String) {
         viewModelScope.launch {
-            try { repo.subscribeByUrl(feedUrl) } catch (_: Exception) {}
+            try { repo.subscribeByUrl(feedUrl) } catch (e: Exception) {
+                _errorMessage.value = e.message ?: "Failed to subscribe"
+            }
         }
     }
 
@@ -86,14 +99,18 @@ class PodcastViewModel(private val repo: PodcastRepository) : ViewModel() {
     fun refresh(feedUrl: String) {
         viewModelScope.launch {
             _isRefreshing.value = true
-            try { repo.refreshEpisodes(feedUrl) } catch (_: Exception) {}
+            try { repo.refreshEpisodes(feedUrl) } catch (e: Exception) {
+                _errorMessage.value = e.message ?: "Failed to refresh"
+            }
             _isRefreshing.value = false
         }
     }
 
     fun addToQueue(episodeGuid: String) {
         viewModelScope.launch {
-            try { repo.addToQueue(episodeGuid) } catch (_: Exception) {}
+            try { repo.addToQueue(episodeGuid) } catch (e: Exception) {
+                _errorMessage.value = e.message ?: "Failed to add to queue"
+            }
         }
     }
 
@@ -103,13 +120,17 @@ class PodcastViewModel(private val repo: PodcastRepository) : ViewModel() {
 
     fun reorderQueue(items: List<QueueItem>) {
         viewModelScope.launch {
-            try { repo.reorderQueue(items) } catch (_: Exception) {}
+            try { repo.reorderQueue(items) } catch (e: Exception) {
+                _errorMessage.value = e.message ?: "Failed to reorder queue"
+            }
         }
     }
 
     fun toggleAutoQueue(feedUrl: String, autoQueue: Boolean) {
         viewModelScope.launch {
-            try { repo.toggleAutoQueue(feedUrl, autoQueue) } catch (_: Exception) {}
+            try { repo.toggleAutoQueue(feedUrl, autoQueue) } catch (e: Exception) {
+                _errorMessage.value = e.message ?: "Failed to update auto-queue setting"
+            }
         }
     }
 
@@ -120,7 +141,9 @@ class PodcastViewModel(private val repo: PodcastRepository) : ViewModel() {
 
     fun setDefaultSpeed(feedUrl: String, speed: Float) {
         viewModelScope.launch {
-            try { repo.setDefaultSpeed(feedUrl, speed) } catch (_: Exception) {}
+            try { repo.setDefaultSpeed(feedUrl, speed) } catch (e: Exception) {
+                _errorMessage.value = e.message ?: "Failed to update playback speed"
+            }
         }
     }
 
