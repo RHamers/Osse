@@ -1,5 +1,6 @@
 package com.rhamers.osse.data.repository
 
+import com.rhamers.osse.data.api.PodcastIndexApi
 import com.rhamers.osse.data.api.PodcastIndexClient
 import com.rhamers.osse.data.api.PodcastIndexFeed
 import com.rhamers.osse.data.db.EpisodeDao
@@ -23,10 +24,10 @@ import okhttp3.Request
 class DefaultPodcastRepository(
     private val podcastDao: PodcastDao,
     private val episodeDao: EpisodeDao,
-    private val queueItemDao: QueueItemDao
+    private val queueItemDao: QueueItemDao,
+    private val api: PodcastIndexApi = PodcastIndexClient.api,
+    private val http: OkHttpClient = OkHttpClient(),
 ) : PodcastRepository {
-
-    private val http = OkHttpClient()
 
     override fun observePodcasts(): Flow<List<Podcast>> =
         podcastDao.observeAll().map { it.map(PodcastEntity::toDomain) }
@@ -38,7 +39,7 @@ class DefaultPodcastRepository(
         queueItemDao.observeQueue().map { it.map(QueueItemWithDetails::toDomain) }
 
     override suspend fun searchPodcasts(query: String): List<PodcastIndexFeed> = withContext(Dispatchers.IO) {
-        PodcastIndexClient.api.searchPodcasts(query).feeds
+        api.searchPodcasts(query).feeds
     }
 
     override suspend fun subscribe(feed: PodcastIndexFeed) = withContext(Dispatchers.IO) {

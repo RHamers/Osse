@@ -25,12 +25,14 @@ done 2026-07-07.
       keep rule is what's preventing it, not an R8 default. `VideoSearchResult` had no
       `@SerializedName` annotations at all, so it was fully exposed to this bug before the fix.
 
-- [ ] **Sign release builds with a real keystore.** Release APKs are currently unsigned
-      (`app/build.gradle.kts` has no `signingConfig` for the `release` build type). Generate a
-      keystore, add a `signingConfig` reading path/passwords from `local.properties` (local)
-      and CI secrets (`.github/workflows/build.yml`), and wire it into the release build type
-      so the Release workflow publishes a signed, installable APK instead of
-      `app-release-unsigned.apk`.
+- [x] **Sign release builds with a real keystore.** Added a `release` `signingConfig` to
+      `app/build.gradle.kts` reading `keystore.path`/`password`/`alias`/`keyPassword` from
+      `local.properties` locally, falling back to `KEYSTORE_PATH`/`KEYSTORE_PASSWORD`/
+      `KEYSTORE_ALIAS`/`KEYSTORE_KEY_PASSWORD` env vars in CI. `.github/workflows/build.yml`
+      decodes the `RELEASE_KEYSTORE_B64` secret to a `.jks` file and passes
+      `RELEASE_KEYSTORE_PASSWORD` through; release workflow now uploads `app-release.apk`
+      instead of `app-release-unsigned.apk`. Both secrets confirmed present on the repo via
+      `gh secret list`. (Uncommitted as of this writing — see working tree.)
 
 - [x] **Remove `resume.txt` from git tracking.** It had already been removed from tracking
       in commit `f654a9d`. Added `resume.txt` to `.git/info/exclude` (local-only, not
@@ -41,13 +43,22 @@ done 2026-07-07.
 
 ## Medium priority
 
-- [ ] **Add unit tests for `DefaultYoutubeCacheManager`** — cache-hit/miss branching,
-      background download, thumbnail fetch (132 lines, currently only exercised indirectly
-      through fakes at the ViewModel layer).
+- [x] **Add unit tests for `DefaultYoutubeCacheManager`.** Already covered by
+      `YoutubeCacheManagerTest` (14 tests: cache-hit/miss branching for both
+      `resolveSource`/`downloadAndCache`, background-download success/failure via a fake
+      `YoutubeExtractor`, `onCached` invocation, delete, search delegation) — this must have
+      been added after the 2026-07-07 audit; the checkbox was just stale.
 
-- [ ] **Add unit tests for `DefaultPodcastRepository`** — including the recently added
-      `refreshAllPodcasts()`; currently only exercised indirectly through
-      `FakePodcastRepository`.
+- [x] **Add unit tests for `DefaultPodcastRepository`.** Added
+      `DefaultPodcastRepositoryTest` (21 tests) using an in-memory Room DB plus a
+      `MockWebServer` for RSS fetches (`okhttp-mockwebserver`, new test dependency) and a
+      hand-rolled `PodcastIndexApi` fake for search. Covers subscribe/subscribeByUrl,
+      refreshEpisodes' auto-queue-only-new-episodes logic and metadata-preservation on
+      refresh, `refreshAllPodcasts()` tolerating one feed failing without blocking the
+      rest, unsubscribe cascade, queue management, and the simple DAO passthroughs.
+      Required adding a `PodcastIndexApi`/`OkHttpClient` constructor seam (both
+      default-valued, so the one production call site in `MainActivity` is unaffected) since
+      `searchPodcasts` previously called the `PodcastIndexClient.api` singleton directly.
 
 - [ ] **Clean up accumulating deprecation warnings:**
   - `ClickableText` in `EpisodeDetailScreen.kt:126`
