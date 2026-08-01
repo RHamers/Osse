@@ -211,6 +211,26 @@ class TrackScreenTest {
     }
 
     @Test
+    fun youtubePlayStartsPlaybackWithoutASecondPress() {
+        val fakeManager = FakeYoutubeCacheManager(resolveResult = Result.success(AudioSource.YoutubeStream("https://fake-stream.example.com/audio")))
+        composeRule.setContent { OsseTheme { TrackScreen(binder = binder, cacheManager = fakeManager) } }
+        openYoutubeDialog()
+        typeIntoYoutubeField("https://youtube.com/watch?v=abc")
+        composeRule.onNodeWithText("Play").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodes(hasText("Search or paste URL")).fetchSemanticsNodes().isEmpty()
+        }
+        var playWhenReady = false
+        instrumentation.runOnMainSync {
+            playWhenReady = binder.getTrack(TrackId.PODCAST)!!.player.playWhenReady
+        }
+        assertTrue(
+            "the dialog's Play button must start playback, not just load the source",
+            playWhenReady,
+        )
+    }
+
+    @Test
     fun youtubeExtractionFailureShowsError() {
         val fakeManager = FakeYoutubeCacheManager(resolveResult = Result.failure(RuntimeException("cipher error")))
         composeRule.setContent { OsseTheme { TrackScreen(binder = binder, cacheManager = fakeManager) } }

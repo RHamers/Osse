@@ -178,6 +178,7 @@ private fun TrackPlayerCard(
             try {
                 val source = cacheManager.resolveSource(videoId, videoUrl, metadata)
                 trackPlayer.setSource(source)
+                trackPlayer.play()
                 dismiss()
             } catch (e: Exception) {
                 youtubeError = e.message ?: "Failed to extract audio URL"
@@ -306,10 +307,7 @@ private fun TrackPlayerCard(
             confirmButton = {
                 if (isUrl) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        val urlId = remember(youtubeInput) {
-                            Regex("[?&]v=([^&]+)").find(youtubeInput)?.groupValues?.get(1)
-                                ?: UUID.randomUUID().toString()
-                        }
+                        val urlId = remember(youtubeInput) { extractYoutubeVideoId(youtubeInput.trim()) }
                         val urlMetadata = remember(urlId) {
                             YoutubeVideoMetadata(
                                 title = urlId,
@@ -558,6 +556,20 @@ private fun SearchResultRow(
 
 private fun isYoutubeUrl(input: String): Boolean =
     input.contains("youtube.com") || input.contains("youtu.be")
+
+// Handles the URL shapes users actually paste: full watch?v= links, youtu.be/ short
+// links (the default when sharing from the YouTube app), and /shorts/ links. None of
+// the latter two carry a v= query param, so a query-param-only regex silently falls
+// back to a random UUID — which then poisons the thumbnail URL and breaks caching.
+internal fun extractYoutubeVideoId(url: String): String {
+    val patterns = listOf(
+        Regex("[?&]v=([^&]+)"),
+        Regex("youtu\\.be/([^?&/]+)"),
+        Regex("/shorts/([^?&/]+)"),
+    )
+    return patterns.firstNotNullOfOrNull { it.find(url)?.groupValues?.get(1) }
+        ?: UUID.randomUUID().toString()
+}
 
 private fun formatDuration(secs: Long): String {
     val h = secs / 3600

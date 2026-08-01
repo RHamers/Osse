@@ -5,6 +5,7 @@ sealed class Screen {
     object PodcastSearch : Screen()
     object UpNext : Screen()
     object YoutubeLibrary : Screen()
+    object ReleaseQr : Screen()
     data class EpisodeList(val feedUrl: String, val podcastTitle: String) : Screen()
     data class EpisodeDetail(val episode: com.rhamers.osse.model.Episode, val backScreen: Screen) : Screen()
 }

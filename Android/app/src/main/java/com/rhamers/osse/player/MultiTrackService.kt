@@ -12,6 +12,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.view.KeyEvent
 import androidx.core.content.ContextCompat
+import androidx.media3.common.Player
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.rhamers.osse.data.db.OsseDatabase
@@ -165,6 +166,25 @@ class MultiTrackService : MediaSessionService() {
         return true
     }
 
+    // The OS routes earbud/media-button events to the session whose player is playing;
+    // the platform session only mirrors the one player it is bound to. Bound solely to
+    // the idle podcast player during music-only playback, the app looks silent to the
+    // system and onMediaButtonEvent never fires. Rebind the session to whichever player
+    // is actually playing (podcast wins when both are) so button events reach us.
+    private fun updateMediaSessionPlayer() {
+        val session = mediaSession ?: return
+        val podcast = tracks[TrackId.PODCAST]?.player
+        val music = tracks[TrackId.MUSIC]?.player
+        val target = when {
+            podcast != null && podcast.playWhenReady -> podcast
+            music != null && music.playWhenReady -> music
+            // Nothing playing: keep the current binding so the session retains the
+            // paused player's state and stays the most-recent target for routing.
+            else -> return
+        }
+        if (session.player !== target) session.setPlayer(target)
+    }
+
     private fun toggleAllActiveTracks() {
         val active = tracks.values.filter { it.state.value.source != null }
         if (active.any { it.player.playWhenReady }) {
@@ -186,6 +206,11 @@ class MultiTrackService : MediaSessionService() {
             tracks[id] = player
             _activeTrackIds.value = _activeTrackIds.value + id
             player.onPlayRequested = { requestAudioFocus() }
+            player.player.addListener(object : Player.Listener {
+                override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                    updateMediaSessionPlayer()
+                }
+            })
             if (id == TrackId.PODCAST && mediaSession == null) {
                 mediaSession = MediaSession.Builder(this@MultiTrackService, player.player)
                     .setCallback(mediaButtonCallback)
@@ -249,6 +274,8 @@ class MultiTrackService : MediaSessionService() {
         fun simulateMediaButtonPress() {
             handleMediaButtonKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE))
         }
+
+        fun sessionPlayerForTesting(): Player? = mediaSession?.player
     }
 
     private val binder = LocalBinder()

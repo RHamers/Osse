@@ -13,6 +13,7 @@ import com.rhamers.osse.data.db.EpisodeEntity
 import com.rhamers.osse.data.db.OsseDatabase
 import com.rhamers.osse.data.db.PodcastEntity
 import com.rhamers.osse.data.db.QueueItemEntity
+import androidx.media3.common.Player
 import com.rhamers.osse.model.AudioSource
 import com.rhamers.osse.model.TrackId
 import kotlinx.coroutines.runBlocking
@@ -415,6 +416,90 @@ class MultiTrackServiceTest {
         assertEquals(40_000L, podcastPosition)
         assertTrue("podcast should keep playing, only its position should change", podcastPlaying)
         assertTrue("music should be unaffected by a double press", musicPlaying)
+    }
+
+    @Test
+    fun mediaSessionBindsToPodcastPlayerByDefault() {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST)
+            binder.addTrack(TrackId.MUSIC)
+        }
+        var sessionPlayer: Player? = null
+        var podcastPlayer: Player? = null
+        instrumentation.runOnMainSync {
+            sessionPlayer = binder.sessionPlayerForTesting()
+            podcastPlayer = binder.getTrack(TrackId.PODCAST)!!.player
+        }
+        assertSame("session should be bound to the podcast player initially", podcastPlayer, sessionPlayer)
+    }
+
+    @Test
+    fun mediaSessionRebindsToMusicPlayerDuringMusicOnlyPlayback() {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).setSource(AudioSource.RssFeed("https://example.com/ep.mp3"))
+            binder.addTrack(TrackId.MUSIC).apply {
+                setSource(AudioSource.YoutubeStream("https://youtube.com/watch?v=abc"))
+                play()
+            }
+        }
+        instrumentation.waitForIdleSync()
+        var sessionPlayer: Player? = null
+        var musicPlayer: Player? = null
+        instrumentation.runOnMainSync {
+            sessionPlayer = binder.sessionPlayerForTesting()
+            musicPlayer = binder.getTrack(TrackId.MUSIC)!!.player
+        }
+        assertSame(
+            "session must mirror the music player when only music plays, or the OS " +
+                "never routes earbud button events to the app",
+            musicPlayer, sessionPlayer
+        )
+    }
+
+    @Test
+    fun mediaSessionRebindsToPodcastPlayerWhenPodcastStartsPlaying() {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).setSource(AudioSource.RssFeed("https://example.com/ep.mp3"))
+            binder.addTrack(TrackId.MUSIC).apply {
+                setSource(AudioSource.YoutubeStream("https://youtube.com/watch?v=abc"))
+                play()
+            }
+        }
+        instrumentation.waitForIdleSync()
+        instrumentation.runOnMainSync { binder.getTrack(TrackId.PODCAST)!!.play() }
+        instrumentation.waitForIdleSync()
+        var sessionPlayer: Player? = null
+        var podcastPlayer: Player? = null
+        instrumentation.runOnMainSync {
+            sessionPlayer = binder.sessionPlayerForTesting()
+            podcastPlayer = binder.getTrack(TrackId.PODCAST)!!.player
+        }
+        assertSame("podcast takes the session back when it starts playing", podcastPlayer, sessionPlayer)
+    }
+
+    @Test
+    fun mediaSessionKeepsMusicPlayerBindingWhileMusicIsPaused() {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).setSource(AudioSource.RssFeed("https://example.com/ep.mp3"))
+            binder.addTrack(TrackId.MUSIC).apply {
+                setSource(AudioSource.YoutubeStream("https://youtube.com/watch?v=abc"))
+                play()
+            }
+        }
+        instrumentation.waitForIdleSync()
+        instrumentation.runOnMainSync { binder.getTrack(TrackId.MUSIC)!!.pause() }
+        instrumentation.waitForIdleSync()
+        var sessionPlayer: Player? = null
+        var musicPlayer: Player? = null
+        instrumentation.runOnMainSync {
+            sessionPlayer = binder.sessionPlayerForTesting()
+            musicPlayer = binder.getTrack(TrackId.MUSIC)!!.player
+        }
+        assertSame(
+            "pausing music should not rebind the session — the paused player keeps " +
+                "the session current so the next button press still reaches the app",
+            musicPlayer, sessionPlayer
+        )
     }
 
     @Test

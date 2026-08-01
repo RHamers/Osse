@@ -17,6 +17,7 @@ import com.rhamers.osse.model.TrackState
 import com.rhamers.osse.model.toMediaItem
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -68,6 +69,9 @@ class TrackPlayer(
     private var retryAttempt = 0
     internal val currentRetryAttempt: Int get() = retryAttempt
 
+    private var pendingRetryJob: Job? = null
+    internal val hasPendingRetry: Boolean get() = pendingRetryJob?.isActive == true
+
     init {
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -118,6 +122,11 @@ class TrackPlayer(
     }
 
     fun setSource(source: AudioSource, title: String? = null) {
+        // A retry scheduled for the old source must not fire against the new one,
+        // and a fresh source deserves a fresh retry budget.
+        pendingRetryJob?.cancel()
+        pendingRetryJob = null
+        retryAttempt = 0
         _state.value = _state.value.copy(source = source, title = title)
         player.setMediaItem(source.toMediaItem())
         player.prepare()
@@ -137,6 +146,10 @@ class TrackPlayer(
     }
 
     fun play() {
+        // An explicit play already re-prepares below; letting a scheduled retry fire
+        // afterwards would seek back to the error position and restart buffering.
+        pendingRetryJob?.cancel()
+        pendingRetryJob = null
         onPlayRequested?.invoke()
         when (player.playbackState) {
             Player.STATE_IDLE -> player.prepare()
@@ -185,12 +198,14 @@ class TrackPlayer(
         val delayMs = retryDelaysMs[retryAttempt]
         retryAttempt++
         val resumePosition = player.currentPosition
-        val shouldResume = player.playWhenReady
-        scope.launch {
+        pendingRetryJob = scope.launch {
             delay(delayMs)
+            // playWhenReady survives errors and reflects the user's latest intent —
+            // possibly changed since the error was captured. Re-preparing is enough:
+            // playback resumes iff it is still true. Writing a value captured at error
+            // time would revert a play/pause press made during the backoff window.
             player.seekTo(resumePosition)
             player.prepare()
-            player.playWhenReady = shouldResume
         }
     }
 

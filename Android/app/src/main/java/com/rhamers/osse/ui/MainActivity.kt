@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Podcasts
+import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.VideoLibrary
 import com.rhamers.osse.ui.youtube.YoutubeLibraryScreen
 import androidx.compose.material3.Icon
@@ -55,6 +56,7 @@ import com.rhamers.osse.ui.podcast.EpisodeDetailScreen
 import com.rhamers.osse.ui.podcast.EpisodeListScreen
 import com.rhamers.osse.ui.podcast.PodcastSearchScreen
 import com.rhamers.osse.ui.podcast.PodcastViewModel
+import com.rhamers.osse.ui.share.ReleaseQrScreen
 import com.rhamers.osse.ui.theme.OsseTheme
 import com.rhamers.osse.ui.tracks.TrackScreen
 import com.rhamers.osse.ui.upnext.UpNextScreen
@@ -148,6 +150,9 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }) {
                                     Icon(Icons.Default.BugReport, contentDescription = "Export logs")
+                                }
+                                IconButton(onClick = { currentScreen = Screen.ReleaseQr }) {
+                                    Icon(Icons.Default.QrCode2, contentDescription = "Show release QR code")
                                 }
                             }
                         )
@@ -250,6 +255,11 @@ class MainActivity : ComponentActivity() {
                                 contentPadding = contentPadding
                             )
                         }
+
+                        Screen.ReleaseQr -> ReleaseQrScreen(
+                            onBack = { currentScreen = Screen.Tracks },
+                            contentPadding = contentPadding
+                        )
 
                         Screen.YoutubeLibrary -> YoutubeLibraryScreen(
                             cachedVideos = OsseDatabase.get(this).youtubeCacheDao().getAll(),
