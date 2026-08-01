@@ -4,6 +4,7 @@ import com.rhamers.osse.data.api.PodcastIndexFeed
 import com.rhamers.osse.data.repository.FakePodcastRepository
 import com.rhamers.osse.model.Podcast
 import com.rhamers.osse.util.MainDispatcherRule
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -16,6 +17,7 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class PodcastViewModelTest {
 
     @get:Rule

@@ -60,13 +60,24 @@ done 2026-07-07.
       default-valued, so the one production call site in `MainActivity` is unaffected) since
       `searchPodcasts` previously called the `PodcastIndexClient.api` singleton directly.
 
-- [ ] **Clean up accumulating deprecation warnings:**
-  - `ClickableText` in `EpisodeDetailScreen.kt:126`
-  - `Icons.Filled.VolumeDown` / `VolumeUp` in `TrackScreen.kt:484,491`
-  - `createComposeRule` (deprecated v1 API) in 5 `androidTest` files, e.g.
-    `EpisodeListScreenTest.kt:30`
-  - Missing `@OptIn(ExperimentalCoroutinesApi)` on `UnconfinedTestDispatcher` usage in
-    `PodcastViewModelQueueTest.kt:35` and `PodcastViewModelTest.kt:109`
+- [x] **Clean up accumulating deprecation warnings** (partial — see note below):
+  - [x] `ClickableText` in `EpisodeDetailScreen.kt` → `Text` + `AnnotatedString` with
+        `LinkAnnotation.Url`/`TextLinkStyles` instead of a manual offset→`getStringAnnotations`
+        click handler. Verified via `EpisodeDetailScreenTest` (8/8 pass).
+  - [x] `Icons.Filled.VolumeDown` / `VolumeUp` in `TrackScreen.kt` → `Icons.AutoMirrored.Filled.*`.
+        Verified via `TrackCardTest`/`TrackScreenTest` (70 tests total, all pass).
+  - [x] Missing `@OptIn(ExperimentalCoroutinesApi)` on `UnconfinedTestDispatcher` usage in
+        `PodcastViewModelQueueTest.kt` and `PodcastViewModelTest.kt` — added class-level
+        `@OptIn`.
+  - [ ] **`createComposeRule` (deprecated v1 API) — deliberately NOT migrated.** Now spans
+        6 `androidTest` files (2 more than the original audit found: `ReleaseQrScreenTest`,
+        `UpNextScreenTest` didn't exist yet in 2026-07-07). The v2 replacement
+        (`androidx.compose.ui.test.junit4.v2.createComposeRule`) switches the test dispatcher
+        from `UnconfinedTestDispatcher` to `StandardTestDispatcher` — a behavior change, not a
+        mechanical rename. Tests relying on immediate/eager coroutine execution could start
+        hanging or flaking after migration and would need per-file verification on a real
+        device, one at a time. Left for a dedicated session rather than bundled into a
+        "cleanup warnings" pass.
 
 - [ ] **Extract shared playback-defaults helper.** `MainActivity.playEpisode()`
       (`:254-263`) and `playEpisodeFromQueue()` (`:286-303`) both independently look up the

@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeDown
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Forward30
 import androidx.compose.material.icons.filled.MoreVert
@@ -27,8 +29,6 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.TaskAlt
-import androidx.compose.material.icons.filled.VolumeDown
-import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -479,14 +479,14 @@ fun TrackCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Icon(Icons.Default.VolumeDown, contentDescription = null, modifier = Modifier.size(20.dp))
+                Icon(Icons.AutoMirrored.Filled.VolumeDown, contentDescription = null, modifier = Modifier.size(20.dp))
                 Slider(
                     value = state.volume,
                     onValueChange = onVolumeChange,
                     valueRange = 0f..1f,
                     modifier = Modifier.weight(1f)
                 )
-                Icon(Icons.Default.VolumeUp, contentDescription = null, modifier = Modifier.size(20.dp))
+                Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null, modifier = Modifier.size(20.dp))
                 Text(
                     "${(state.volume * 100).roundToInt()}%",
                     style = MaterialTheme.typography.labelSmall,

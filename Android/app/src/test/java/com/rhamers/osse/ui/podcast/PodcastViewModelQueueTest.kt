@@ -3,6 +3,7 @@ package com.rhamers.osse.ui.podcast
 import com.rhamers.osse.data.repository.FakePodcastRepository
 import com.rhamers.osse.model.QueueItem
 import com.rhamers.osse.util.MainDispatcherRule
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
@@ -12,6 +13,7 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class PodcastViewModelQueueTest {
 
     @get:Rule
