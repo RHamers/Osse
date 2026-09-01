@@ -12,6 +12,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.rhamers.osse.data.db.EpisodeEntity
 import com.rhamers.osse.data.db.OsseDatabase
+import com.rhamers.osse.data.db.PlaybackStateEntity
 import com.rhamers.osse.data.db.PodcastEntity
 import com.rhamers.osse.data.db.QueueItemEntity
 import androidx.media3.common.Player
@@ -630,6 +631,113 @@ class MultiTrackServiceTest {
                 "never pausing",
             row!!.positionMs > 0L
         )
+    }
+
+    @Test
+    fun restoringPlaybackStateReloadsSourceTitleAndPosition() {
+        val db = OsseDatabase.get(ApplicationProvider.getApplicationContext())
+        runBlocking {
+            db.playbackStateDao().upsert(
+                PlaybackStateEntity(
+                    trackId = "PODCAST", sourceType = "RSS_FEED",
+                    sourceRef = "https://example.com/ep.mp3", title = "Restored Episode",
+                    positionMs = 42_000L, updatedAt = 0L,
+                )
+            )
+        }
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST)
+            binder.restorePlaybackStateForTesting()
+        }
+        val state = binder.getTrack(TrackId.PODCAST)!!.state.value
+        assertEquals(AudioSource.RssFeed("https://example.com/ep.mp3"), state.source)
+        assertEquals("Restored Episode", state.title)
+        assertEquals(42_000L, state.positionMs)
+    }
+
+    @Test
+    fun restoringPodcastTrackAppliesThePodcastsDefaultSpeed() {
+        val db = OsseDatabase.get(ApplicationProvider.getApplicationContext())
+        runBlocking {
+            db.podcastDao().upsert(
+                PodcastEntity(feedUrl = "https://feed.example.com", title = "Podcast",
+                    artworkUrl = null, description = null, defaultSpeed = 1.5f)
+            )
+            db.episodeDao().upsertAll(listOf(
+                EpisodeEntity(guid = "ep1", podcastFeedUrl = "https://feed.example.com",
+                    title = "Episode 1", enclosureUrl = "https://example.com/ep1.mp3",
+                    durationMs = 0L, showNotes = null, pubDateMs = 0L)
+            ))
+            db.playbackStateDao().upsert(
+                PlaybackStateEntity(
+                    trackId = "PODCAST", sourceType = "RSS_FEED",
+                    sourceRef = "https://example.com/ep1.mp3", title = "Episode 1",
+                    positionMs = 0L, updatedAt = 0L,
+                )
+            )
+        }
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST)
+            binder.restorePlaybackStateForTesting()
+        }
+        assertEquals(1.5f, binder.getTrack(TrackId.PODCAST)!!.state.value.speed, 0.001f)
+    }
+
+    @Test
+    fun coldStartRestoreThenMediaButtonPressResumesBothTracks() {
+        val db = OsseDatabase.get(ApplicationProvider.getApplicationContext())
+        runBlocking {
+            db.playbackStateDao().upsert(
+                PlaybackStateEntity(
+                    trackId = "PODCAST", sourceType = "RSS_FEED",
+                    sourceRef = "https://example.com/ep.mp3", title = null,
+                    positionMs = 10_000L, updatedAt = 0L,
+                )
+            )
+            db.playbackStateDao().upsert(
+                PlaybackStateEntity(
+                    trackId = "MUSIC", sourceType = "RSS_FEED",
+                    sourceRef = "https://example.com/music.mp3", title = null,
+                    positionMs = 0L, updatedAt = 0L,
+                )
+            )
+        }
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST)
+            binder.addTrack(TrackId.MUSIC)
+            binder.restorePlaybackStateForTesting()
+            binder.simulateMediaButtonPress()
+        }
+        Thread.sleep(400)
+        instrumentation.runOnMainSync {}
+        var podcastPlaying = false
+        var musicPlaying = false
+        instrumentation.runOnMainSync {
+            podcastPlaying = binder.getTrack(TrackId.PODCAST)!!.player.playWhenReady
+            musicPlaying = binder.getTrack(TrackId.MUSIC)!!.player.playWhenReady
+        }
+        assertTrue("restored podcast track should resume on media-button press", podcastPlaying)
+        assertTrue("restored music track should resume on media-button press", musicPlaying)
+    }
+
+    @Test
+    fun restoringYoutubeTrackNotInCacheLeavesItSourcelessAndClearsStaleRow() {
+        val db = OsseDatabase.get(ApplicationProvider.getApplicationContext())
+        runBlocking {
+            db.playbackStateDao().upsert(
+                PlaybackStateEntity(
+                    trackId = "MUSIC", sourceType = "YOUTUBE",
+                    sourceRef = "missingVideoId", title = "Gone", positionMs = 0L, updatedAt = 0L,
+                )
+            )
+        }
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.MUSIC)
+            binder.restorePlaybackStateForTesting()
+        }
+        assertNull(binder.getTrack(TrackId.MUSIC)!!.state.value.source)
+        val row = runBlocking { db.playbackStateDao().getByTrackId("MUSIC") }
+        assertNull("stale playback_state row must be cleared when the cache entry is gone", row)
     }
 
     private fun waitUntilPlaying(id: TrackId, timeoutMs: Long): Boolean {

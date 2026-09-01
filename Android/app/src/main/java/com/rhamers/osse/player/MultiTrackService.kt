@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.net.Uri
 import android.os.Binder
 import android.os.Build
 import android.os.Handler
@@ -18,6 +19,7 @@ import androidx.media3.session.MediaSessionService
 import com.rhamers.osse.data.db.OsseDatabase
 import com.rhamers.osse.data.db.PlaybackStateEntity
 import com.rhamers.osse.model.AudioSource
+import com.rhamers.osse.model.PlaybackSourceType
 import com.rhamers.osse.model.TrackId
 import com.rhamers.osse.model.toPlaybackRef
 import com.rhamers.osse.player.DefaultYoutubeCacheManager
@@ -35,6 +37,7 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 
 class MultiTrackService : MediaSessionService() {
@@ -284,6 +287,8 @@ class MultiTrackService : MediaSessionService() {
             handleMediaButtonKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE))
         }
 
+        fun restorePlaybackStateForTesting() = restorePlaybackState()
+
         fun sessionPlayerForTesting(): Player? = mediaSession?.player
     }
 
@@ -320,7 +325,62 @@ class MultiTrackService : MediaSessionService() {
         )
         binder.addTrack(TrackId.PODCAST)
         binder.addTrack(TrackId.MUSIC)
+        restorePlaybackState()
         startPeriodicPlaybackFlush()
+    }
+
+    // Reloads each track's persisted source/title/position from `playback_state` so
+    // playback survives process death. Never calls .play() — restored tracks stay paused
+    // until a media-button press (or other explicit user action) resumes them via
+    // toggleAllActiveTracks(). Runs synchronously on Dispatchers.IO so onCreate() doesn't
+    // return until tracks are loaded, avoiding a window where the UI observes empty tracks.
+    private fun restorePlaybackState() {
+        val db = OsseDatabase.get(this)
+
+        data class Restored(
+            val trackId: TrackId,
+            val source: AudioSource,
+            val title: String?,
+            val positionMs: Long,
+            val speed: Float?,
+        )
+
+        val toRestore = runBlocking(Dispatchers.IO) {
+            listOf(TrackId.PODCAST, TrackId.MUSIC).mapNotNull { trackId ->
+                val row = db.playbackStateDao().getByTrackId(trackId.name) ?: return@mapNotNull null
+                val source: AudioSource? = when (row.sourceType) {
+                    PlaybackSourceType.RSS_FEED -> AudioSource.RssFeed(row.sourceRef)
+                    PlaybackSourceType.LOCAL_FILE -> AudioSource.LocalFile(Uri.parse(row.sourceRef))
+                    PlaybackSourceType.YOUTUBE -> {
+                        val cached = db.youtubeCacheDao().getById(row.sourceRef)
+                        if (cached == null) {
+                            db.playbackStateDao().delete(trackId.name)
+                            null
+                        } else {
+                            AudioSource.YoutubeDownloaded(cached.localPath)
+                        }
+                    }
+                    else -> null
+                }
+                source ?: return@mapNotNull null
+                val speed = if (trackId == TrackId.PODCAST && source is AudioSource.RssFeed) {
+                    db.episodeDao().getByEnclosureUrl(source.enclosureUrl)
+                        ?.podcastFeedUrl
+                        ?.let { db.podcastDao().getByUrl(it) }
+                        ?.defaultSpeed
+                } else {
+                    null
+                }
+                Restored(trackId, source, row.title, row.positionMs, speed)
+            }
+        }
+
+        toRestore.forEach { r ->
+            val track = tracks[r.trackId] ?: return@forEach
+            track.setSource(r.source, r.title)
+            track.seekTo(r.positionMs)
+            r.speed?.let { track.setSpeed(it) }
+        }
     }
 
     // The debounce(2s) collector in startPlaybackStatePersistence() only emits once a track's
