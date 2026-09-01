@@ -121,7 +121,11 @@ class TrackPlayer(
         }
     }
 
-    fun setSource(source: AudioSource, title: String? = null) {
+    // prepare = false lets a caller load a source (e.g. restoring after process death) without
+    // triggering ExoPlayer's immediate network buffering. The track still prepares correctly
+    // the moment playback is actually requested: play() already handles
+    // STATE_IDLE -> player.prepare() below.
+    fun setSource(source: AudioSource, title: String? = null, prepare: Boolean = true) {
         // A retry scheduled for the old source must not fire against the new one,
         // and a fresh source deserves a fresh retry budget.
         pendingRetryJob?.cancel()
@@ -129,7 +133,7 @@ class TrackPlayer(
         retryAttempt = 0
         _state.value = _state.value.copy(source = source, title = title)
         player.setMediaItem(source.toMediaItem())
-        player.prepare()
+        if (prepare) player.prepare()
     }
 
     fun setVolume(volume: Float) {

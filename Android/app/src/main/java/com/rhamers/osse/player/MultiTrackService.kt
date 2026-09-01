@@ -11,6 +11,7 @@ import android.os.Binder
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
+import android.util.Log
 import android.view.KeyEvent
 import androidx.core.content.ContextCompat
 import androidx.media3.common.Player
@@ -56,6 +57,15 @@ class MultiTrackService : MediaSessionService() {
     // Tracks which track IDs were playing when a transient focus loss occurred,
     // so we only resume those (not tracks the user had manually paused).
     private val pausedByFocusLoss = mutableSetOf<TrackId>()
+
+    // Tracks which track IDs have already had their stale playback_state row cleared for
+    // their current AudioSource.YoutubeStream source, so persistState() doesn't issue a
+    // redundant DELETE on every debounce/flush tick for the entire duration of a
+    // YoutubeStream's background download (there's nothing left to delete after the first
+    // tick). Cleared per-trackId whenever a persistable source is set, and reset entirely by
+    // clearTracksForTesting() so tests stay isolated.
+    private val youtubeStreamCleared: MutableSet<TrackId> =
+        java.util.Collections.synchronizedSet(mutableSetOf())
 
     // Holds the pending AudioFocusRequest on API 26+ so we can abandon it later.
     private var audioFocusRequestO: AudioFocusRequest? = null
@@ -270,6 +280,7 @@ class MultiTrackService : MediaSessionService() {
             tracks.clear()
             _activeTrackIds.value = emptyList()
             pausedByFocusLoss.clear()
+            youtubeStreamCleared.clear()
         }
 
         fun simulateAudioFocusChange(focusChange: Int) {
@@ -345,39 +356,55 @@ class MultiTrackService : MediaSessionService() {
             val speed: Float?,
         )
 
-        val toRestore = runBlocking(Dispatchers.IO) {
-            listOf(TrackId.PODCAST, TrackId.MUSIC).mapNotNull { trackId ->
-                val row = db.playbackStateDao().getByTrackId(trackId.name) ?: return@mapNotNull null
-                val source: AudioSource? = when (row.sourceType) {
-                    PlaybackSourceType.RSS_FEED -> AudioSource.RssFeed(row.sourceRef)
-                    PlaybackSourceType.LOCAL_FILE -> AudioSource.LocalFile(Uri.parse(row.sourceRef))
-                    PlaybackSourceType.YOUTUBE -> {
-                        val cached = db.youtubeCacheDao().getById(row.sourceRef)
-                        if (cached == null) {
+        val toRestore = try {
+            runBlocking(Dispatchers.IO) {
+                listOf(TrackId.PODCAST, TrackId.MUSIC).mapNotNull { trackId ->
+                    val row = db.playbackStateDao().getByTrackId(trackId.name) ?: return@mapNotNull null
+                    val source: AudioSource? = when (row.sourceType) {
+                        PlaybackSourceType.RSS_FEED -> AudioSource.RssFeed(row.sourceRef)
+                        PlaybackSourceType.LOCAL_FILE -> AudioSource.LocalFile(Uri.parse(row.sourceRef))
+                        PlaybackSourceType.YOUTUBE -> {
+                            val cached = db.youtubeCacheDao().getById(row.sourceRef)
+                            if (cached == null) {
+                                db.playbackStateDao().delete(trackId.name)
+                                null
+                            } else {
+                                AudioSource.YoutubeDownloaded(cached.localPath)
+                            }
+                        }
+                        else -> {
+                            // Unrecognized/corrupt sourceType: nothing we can restore from it,
+                            // and it should never be left behind for a future restore attempt
+                            // to trip over either.
                             db.playbackStateDao().delete(trackId.name)
                             null
-                        } else {
-                            AudioSource.YoutubeDownloaded(cached.localPath)
                         }
                     }
-                    else -> null
+                    source ?: return@mapNotNull null
+                    val speed = if (trackId == TrackId.PODCAST && source is AudioSource.RssFeed) {
+                        db.episodeDao().getByEnclosureUrl(source.enclosureUrl)
+                            ?.podcastFeedUrl
+                            ?.let { db.podcastDao().getByUrl(it) }
+                            ?.defaultSpeed
+                    } else {
+                        null
+                    }
+                    Restored(trackId, source, row.title, row.positionMs, speed)
                 }
-                source ?: return@mapNotNull null
-                val speed = if (trackId == TrackId.PODCAST && source is AudioSource.RssFeed) {
-                    db.episodeDao().getByEnclosureUrl(source.enclosureUrl)
-                        ?.podcastFeedUrl
-                        ?.let { db.podcastDao().getByUrl(it) }
-                        ?.defaultSpeed
-                } else {
-                    null
-                }
-                Restored(trackId, source, row.title, row.positionMs, speed)
             }
+        } catch (e: Exception) {
+            Log.w(TAG, "restorePlaybackState failed", e)
+            emptyList()
         }
 
         toRestore.forEach { r ->
             val track = tracks[r.trackId] ?: return@forEach
-            track.setSource(r.source, r.title)
+            // prepare = false: restoring on a bare service (re)creation — including an
+            // unattended OS restart after a low-memory kill — must not start network
+            // buffering the user never asked for. TrackPlayer.play() already prepares from
+            // STATE_IDLE, so the track prepares correctly the moment playback is actually
+            // requested.
+            track.setSource(r.source, r.title, prepare = false)
             track.seekTo(r.positionMs)
             r.speed?.let { track.setSpeed(it) }
         }
@@ -399,11 +426,18 @@ class MultiTrackService : MediaSessionService() {
         serviceScope.launch {
             while (true) {
                 delay(PERIODIC_FLUSH_INTERVAL_MS)
-                TrackId.entries.forEach { trackId ->
-                    val state = tracks[trackId]?.state?.value ?: return@forEach
-                    if (state.isPlaying) {
-                        persistState(db, trackId, state.source, state.title, state.positionMs)
+                // One tick's DAO failure must not crash the root SupervisorJob scope (it has
+                // no exception handler) nor permanently kill this loop — log and let the next
+                // delay()/tick proceed.
+                try {
+                    TrackId.entries.forEach { trackId ->
+                        val state = tracks[trackId]?.state?.value ?: return@forEach
+                        if (state.isPlaying) {
+                            persistState(db, trackId, state.source, state.title, state.positionMs)
+                        }
                     }
+                } catch (e: Exception) {
+                    Log.w(TAG, "periodic playback flush tick failed", e)
                 }
             }
         }
@@ -430,8 +464,18 @@ class MultiTrackService : MediaSessionService() {
         withContext(Dispatchers.IO) {
             val ref = source?.toPlaybackRef()
             if (ref == null) {
+                if (source is AudioSource.YoutubeStream) {
+                    // toPlaybackRef() always returns null for YoutubeStream (its CDN URL is
+                    // ephemeral), so without this guard every debounce/flush tick for the
+                    // entire duration of its background download would issue a DELETE for
+                    // no reason — there's nothing left to delete after the first tick clears
+                    // any stale row from a previously persisted source.
+                    if (trackId in youtubeStreamCleared) return@withContext
+                    youtubeStreamCleared += trackId
+                }
                 db.playbackStateDao().delete(trackId.name)
             } else {
+                youtubeStreamCleared -= trackId
                 val (sourceType, sourceRef) = ref
                 db.playbackStateDao().upsert(
                     PlaybackStateEntity(
@@ -446,7 +490,9 @@ class MultiTrackService : MediaSessionService() {
             }
             if (source is AudioSource.RssFeed) {
                 db.episodeDao().getByEnclosureUrl(source.enclosureUrl)?.let { ep ->
-                    if (!ep.completed) db.episodeDao().updatePosition(ep.guid, positionMs)
+                    if (!ep.completed && positionMs > 0) {
+                        db.episodeDao().updatePosition(ep.guid, positionMs)
+                    }
                 }
             }
         }
@@ -501,6 +547,7 @@ class MultiTrackService : MediaSessionService() {
     }
 
     companion object {
+        private const val TAG = "MultiTrackService"
         private const val DOUBLE_PRESS_WINDOW_MS = 300L
         private const val PERIODIC_FLUSH_INTERVAL_MS = 2_000L
     }

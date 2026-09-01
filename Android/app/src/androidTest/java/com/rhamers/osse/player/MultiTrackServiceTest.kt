@@ -683,6 +683,64 @@ class MultiTrackServiceTest {
         assertEquals(1.5f, binder.getTrack(TrackId.PODCAST)!!.state.value.speed, 0.001f)
     }
 
+    // Fix 3 (final review): of the three AudioSource branches restorePlaybackState() handles,
+    // only RSS_FEED and the YOUTUBE cache-miss case previously had restore-side test coverage.
+    // LOCAL_FILE has an external permission dependency and a Uri.parse() round-trip of its own.
+    @Test
+    fun restoringLocalFileTrackReloadsUriAndPosition() {
+        val db = OsseDatabase.get(ApplicationProvider.getApplicationContext())
+        val uriString = "content://media/external/audio/media/1234"
+        runBlocking {
+            db.playbackStateDao().upsert(
+                PlaybackStateEntity(
+                    trackId = "MUSIC", sourceType = "LOCAL_FILE",
+                    sourceRef = uriString, title = "Local Track",
+                    positionMs = 7_000L, updatedAt = 0L,
+                )
+            )
+        }
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.MUSIC)
+            binder.restorePlaybackStateForTesting()
+        }
+        val state = binder.getTrack(TrackId.MUSIC)!!.state.value
+        assertEquals(AudioSource.LocalFile(Uri.parse(uriString)), state.source)
+        assertEquals("Local Track", state.title)
+        assertEquals(7_000L, state.positionMs)
+    }
+
+    // Fix 2 (final review): restorePlaybackState() must not trigger ExoPlayer's immediate
+    // network buffering on a bare service (re)creation the user never asked for — e.g. an
+    // unattended OS restart after a low-memory kill. TrackPlayer.setSource(prepare = false)
+    // is used for the restore call site only; the player must stay STATE_IDLE until play()
+    // is actually invoked.
+    @Test
+    fun restoringPlaybackStateDoesNotEagerlyPrepareThePlayer() {
+        val db = OsseDatabase.get(ApplicationProvider.getApplicationContext())
+        runBlocking {
+            db.playbackStateDao().upsert(
+                PlaybackStateEntity(
+                    trackId = "PODCAST", sourceType = "RSS_FEED",
+                    sourceRef = "https://example.com/ep.mp3", title = "Restored Episode",
+                    positionMs = 42_000L, updatedAt = 0L,
+                )
+            )
+        }
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST)
+            binder.restorePlaybackStateForTesting()
+        }
+        var playbackState = Player.STATE_READY
+        instrumentation.runOnMainSync {
+            playbackState = binder.getTrack(TrackId.PODCAST)!!.player.playbackState
+        }
+        assertEquals(
+            "restoring a track must not start network buffering — the player should stay " +
+                "STATE_IDLE until play() is actually called",
+            Player.STATE_IDLE, playbackState
+        )
+    }
+
     @Test
     fun coldStartRestoreThenMediaButtonPressResumesBothTracks() {
         val db = OsseDatabase.get(ApplicationProvider.getApplicationContext())
@@ -708,16 +766,17 @@ class MultiTrackServiceTest {
             binder.restorePlaybackStateForTesting()
             binder.simulateMediaButtonPress()
         }
-        Thread.sleep(400)
-        instrumentation.runOnMainSync {}
-        var podcastPlaying = false
-        var musicPlaying = false
-        instrumentation.runOnMainSync {
-            podcastPlaying = binder.getTrack(TrackId.PODCAST)!!.player.playWhenReady
-            musicPlaying = binder.getTrack(TrackId.MUSIC)!!.player.playWhenReady
-        }
-        assertTrue("restored podcast track should resume on media-button press", podcastPlaying)
-        assertTrue("restored music track should resume on media-button press", musicPlaying)
+        // Poll rather than a fixed Thread.sleep(400): the single-press handler only fires
+        // after DOUBLE_PRESS_WINDOW_MS (300ms), so a fixed 400ms sleep leaves only a ~100ms
+        // margin and can flake under load.
+        assertTrue(
+            "restored podcast track should resume on media-button press",
+            waitUntilPlayWhenReady(TrackId.PODCAST, timeoutMs = 2_000)
+        )
+        assertTrue(
+            "restored music track should resume on media-button press",
+            waitUntilPlayWhenReady(TrackId.MUSIC, timeoutMs = 2_000)
+        )
     }
 
     @Test
@@ -748,6 +807,19 @@ class MultiTrackServiceTest {
                 playing = binder.getTrack(id)?.state?.value?.isPlaying == true
             }
             if (playing) return true
+            Thread.sleep(100)
+        }
+        return false
+    }
+
+    private fun waitUntilPlayWhenReady(id: TrackId, timeoutMs: Long): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            var ready = false
+            instrumentation.runOnMainSync {
+                ready = binder.getTrack(id)?.player?.playWhenReady == true
+            }
+            if (ready) return true
             Thread.sleep(100)
         }
         return false

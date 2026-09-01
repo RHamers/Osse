@@ -204,3 +204,31 @@ creation:
 Not simulating an actual process kill (not feasible in an instrumented test) — the
 recreate-a-fresh-service-against-the-same-DB pattern is this suite's existing stand-in for
 that class of scenario.
+
+## Addendum (post-implementation)
+
+Two places where what shipped differs from what this document originally described, both
+additive rather than corrective — recorded here so a future session reading this spec doesn't
+have to reconstruct them from the diff.
+
+**Save-path wiring.** The Save Path section above shows a fixed loop over
+`listOf(PODCAST, MUSIC)` calling `startPlaybackStatePersistence()` once from
+`MultiTrackService.onCreate()`. What shipped instead wires the debounced persistence collector
+per-track, inside `LocalBinder.addTrack()`, right after the track is created. Reason:
+`MultiTrackServiceTest`'s existing `clearTracksForTesting()` + `addTrack()` re-creation
+pattern — used by nearly every test in that file — would otherwise leave the collector
+permanently attached to an already-released `TrackPlayer` after the first test that runs,
+since a fixed loop keyed off `onCreate()` only ever wires the original track instances.
+Functionally equivalent for production use: every track still gets a persistence collector
+for its full lifetime, just attached at track-creation time rather than service-creation time.
+
+**Periodic flush while playing.** The debounce-only design described above
+(`debounce(2_000)` on each track's state flow) has a real gap: `TrackPlayer` emits a fresh
+`positionMs` into its state every 500ms while playing, so the upstream flow driving the
+debounce never goes quiet during continuous playback — `persistState()` never fired at all
+for the duration of an uninterrupted play session, only on pause/source-change/stop. This
+defeated the feature's own purpose for the "process killed while actively listening" case,
+which is the common case, not the edge case. Fixed by adding `startPeriodicPlaybackFlush()`:
+every ~2s, independent of and in addition to the debounce collector, it persists whichever
+tracks are currently playing regardless of whether their state actually changed since the
+last tick.
