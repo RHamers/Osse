@@ -67,3 +67,8 @@ gomobile-build-*/
 *~
 .env
 .env.local
+
+# ============================================================
+# Claude Code / superpowers scratch workspaces
+# ============================================================
+.superpowers/
