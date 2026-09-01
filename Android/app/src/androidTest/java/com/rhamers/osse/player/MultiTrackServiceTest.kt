@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.media.AudioManager
+import android.net.Uri
 import android.os.IBinder
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -23,6 +24,8 @@ import org.junit.Before
 import org.junit.BeforeClass
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.File
+import java.io.FileOutputStream
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -576,5 +579,113 @@ class MultiTrackServiceTest {
         Thread.sleep(2_500)
         val row = runBlocking { db.playbackStateDao().getByTrackId("MUSIC") }
         assertNull("an ephemeral YouTube CDN stream URL must never be persisted", row)
+    }
+
+    // Regression test for the plan-level gap flagged in review: TrackPlayer emits a fresh
+    // positionMs into its state StateFlow every 500ms while actually playing, so the
+    // debounce(2s) collector's upstream never goes quiet during continuous playback and never
+    // fires. This is the exact scenario the resume-after-process-death feature exists for
+    // (process killed mid-listen, not mid-pause), so a persisted row must appear — and its
+    // position must keep advancing — purely from the periodic flush, with the track never
+    // pausing. Uses a real locally-generated silent WAV file (not a fake/unreachable URL like
+    // the other tests here) because this is the one test in the file that needs ExoPlayer's
+    // actual isPlaying flag to go true, not just playWhenReady.
+    @Test
+    fun playbackStateAdvancesFromPeriodicFlushDuringContinuousPlayback() {
+        val db = OsseDatabase.get(ApplicationProvider.getApplicationContext())
+        val wavFile = createSilentWavFile(durationSeconds = 8)
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).apply {
+                setSource(AudioSource.LocalFile(Uri.fromFile(wavFile)))
+                play()
+            }
+        }
+        assertTrue(
+            "expected the local WAV file to actually start playing (ExoPlayer.isPlaying)",
+            waitUntilPlaying(TrackId.PODCAST, timeoutMs = 5_000)
+        )
+
+        // Longer than one periodic-flush tick (2s), with margin, never pausing in between.
+        Thread.sleep(3_200)
+
+        var isPlaying = false
+        instrumentation.runOnMainSync {
+            isPlaying = binder.getTrack(TrackId.PODCAST)!!.state.value.isPlaying
+        }
+        assertTrue(
+            "track must still be playing at assertion time — this test proves persistence " +
+                "happens DURING play, not only after pause/source-change",
+            isPlaying
+        )
+
+        val row = runBlocking { db.playbackStateDao().getByTrackId("PODCAST") }
+        assertNotNull(
+            "the periodic flush should have persisted a playback_state row while the track " +
+                "was continuously playing (the debounce collector alone never fires here, " +
+                "since positionMs never stops changing while playing)",
+            row
+        )
+        assertTrue(
+            "positionMs should have advanced past 0 from the periodic flush, with the track " +
+                "never pausing",
+            row!!.positionMs > 0L
+        )
+    }
+
+    private fun waitUntilPlaying(id: TrackId, timeoutMs: Long): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            var playing = false
+            instrumentation.runOnMainSync {
+                playing = binder.getTrack(id)?.state?.value?.isPlaying == true
+            }
+            if (playing) return true
+            Thread.sleep(100)
+        }
+        return false
+    }
+
+    private fun createSilentWavFile(durationSeconds: Int): File {
+        val sampleRate = 8000
+        val dataSize = sampleRate * durationSeconds // 8-bit mono: 1 byte/sample
+        val file = File.createTempFile(
+            "silence",
+            ".wav",
+            ApplicationProvider.getApplicationContext<Context>().cacheDir
+        )
+        FileOutputStream(file).use { out ->
+            fun writeInt(v: Int) = out.write(
+                byteArrayOf(
+                    (v and 0xff).toByte(),
+                    ((v shr 8) and 0xff).toByte(),
+                    ((v shr 16) and 0xff).toByte(),
+                    ((v shr 24) and 0xff).toByte(),
+                )
+            )
+            fun writeShort(v: Int) = out.write(byteArrayOf((v and 0xff).toByte(), ((v shr 8) and 0xff).toByte()))
+
+            out.write("RIFF".toByteArray())
+            writeInt(36 + dataSize)
+            out.write("WAVE".toByteArray())
+            out.write("fmt ".toByteArray())
+            writeInt(16) // fmt chunk size
+            writeShort(1) // PCM
+            writeShort(1) // mono
+            writeInt(sampleRate)
+            writeInt(sampleRate) // byte rate (sampleRate * channels * bitsPerSample/8)
+            writeShort(1) // block align
+            writeShort(8) // bits per sample
+            out.write("data".toByteArray())
+            writeInt(dataSize)
+
+            val silence = ByteArray(4096) { 0x80.toByte() } // midpoint = silence for 8-bit unsigned PCM
+            var remaining = dataSize
+            while (remaining > 0) {
+                val n = minOf(silence.size, remaining)
+                out.write(silence, 0, n)
+                remaining -= n
+            }
+        }
+        return file
     }
 }

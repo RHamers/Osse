@@ -320,7 +320,33 @@ class MultiTrackService : MediaSessionService() {
         )
         binder.addTrack(TrackId.PODCAST)
         binder.addTrack(TrackId.MUSIC)
+        startPeriodicPlaybackFlush()
+    }
 
+    // The debounce(2s) collector in startPlaybackStatePersistence() only emits once a track's
+    // state goes quiet for 2s. TrackPlayer emits a fresh positionMs into its state StateFlow
+    // every 500ms while actually playing, so the upstream never goes quiet during an
+    // uninterrupted play session — the debounced collector alone would never persist a
+    // currently-playing track's position, leaving it arbitrarily stale for the process-death
+    // resume scenario this feature exists for. This periodic flush persists every currently
+    // playing track's state on a fixed cadence regardless of whether the value actually
+    // changed, independent of the debounce path. It re-reads `tracks` fresh on every tick
+    // rather than capturing a TrackPlayer/StateFlow reference once, so it naturally survives
+    // this file's clearTracksForTesting() + addTrack() re-creation pattern without needing
+    // per-instance wiring.
+    private fun startPeriodicPlaybackFlush() {
+        val db = OsseDatabase.get(this)
+        serviceScope.launch {
+            while (true) {
+                delay(PERIODIC_FLUSH_INTERVAL_MS)
+                TrackId.entries.forEach { trackId ->
+                    val state = tracks[trackId]?.state?.value ?: return@forEach
+                    if (state.isPlaying) {
+                        persistState(db, trackId, state.source, state.title, state.positionMs)
+                    }
+                }
+            }
+        }
     }
 
     private fun startPlaybackStatePersistence(trackId: TrackId, player: TrackPlayer) {
@@ -416,5 +442,6 @@ class MultiTrackService : MediaSessionService() {
 
     companion object {
         private const val DOUBLE_PRESS_WINDOW_MS = 300L
+        private const val PERIODIC_FLUSH_INTERVAL_MS = 2_000L
     }
 }
