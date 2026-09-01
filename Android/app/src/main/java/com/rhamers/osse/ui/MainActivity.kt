@@ -102,6 +102,7 @@ class MainActivity : ComponentActivity() {
 
         filePickerLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri != null) {
+                grantPersistableReadPermission(contentResolver, uri)
                 binder?.getTrack(pendingTrackId)?.setSource(AudioSource.LocalFile(uri))
             }
         }
