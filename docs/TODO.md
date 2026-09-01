@@ -69,23 +69,32 @@ done 2026-07-07.
   - [x] Missing `@OptIn(ExperimentalCoroutinesApi)` on `UnconfinedTestDispatcher` usage in
         `PodcastViewModelQueueTest.kt` and `PodcastViewModelTest.kt` — added class-level
         `@OptIn`.
-  - [ ] **`createComposeRule` (deprecated v1 API) — deliberately NOT migrated.** Now spans
-        6 `androidTest` files (2 more than the original audit found: `ReleaseQrScreenTest`,
-        `UpNextScreenTest` didn't exist yet in 2026-07-07). The v2 replacement
-        (`androidx.compose.ui.test.junit4.v2.createComposeRule`) switches the test dispatcher
-        from `UnconfinedTestDispatcher` to `StandardTestDispatcher` — a behavior change, not a
-        mechanical rename. Tests relying on immediate/eager coroutine execution could start
-        hanging or flaking after migration and would need per-file verification on a real
-        device, one at a time. Left for a dedicated session rather than bundled into a
-        "cleanup warnings" pass.
+  - [x] **`createComposeRule` migrated to v2** (`androidx.compose.ui.test.junit4.v2.createComposeRule`)
+        in all 6 remaining `androidTest` files (`EpisodeDetailScreenTest`,
+        `EpisodeListScreenTest`, `PodcastSearchScreenTest`, `ReleaseQrScreenTest`,
+        `UpNextScreenTest`, `YoutubeLibraryScreenTest`). Lower-risk than first assessed:
+        none used `runOnIdle` (the pattern that hangs under v2's `StandardTestDispatcher`),
+        and the async ones already used the safe `waitUntil(timeoutMillis) { }` pattern —
+        the same one already proven in `TrackScreenTest`/`TrackCardTest`, which were on v2
+        already. Verified with the full instrumented suite (155 tests) on both the Pixel_9
+        emulator and a real SM-G525F device — all pass. No more deprecation warnings from
+        this item anywhere in the codebase.
 
-- [ ] **Extract shared playback-defaults helper.** `MainActivity.playEpisode()`
-      (`:254-263`) and `playEpisodeFromQueue()` (`:286-303`) both independently look up the
-      podcast's `defaultSpeed` and seek to a saved `positionMs`. Consolidate into one helper.
+- [x] **Extract shared playback-defaults helper.** Added
+      `applyPlaybackDefaults(track, podcastFeedUrl, positionMs)` in `MainActivity.kt`,
+      looking up the podcast's `defaultSpeed` and seeking to `positionMs` in one place.
+      `playEpisode()` calls it synchronously (it already has the full `Episode`);
+      `playEpisodeFromQueue()` calls it from inside its existing `lifecycleScope.launch`
+      once the episode entity is fetched — the sync-vs-async shape of each caller is
+      unchanged, only the duplicated lookup/setSpeed/seekTo logic was consolidated.
+      Pure refactor, no behavior change; verified via `compileDebugKotlin`. Note:
+      `MainActivity` has no instrumented tests today (nothing to regress against, and
+      standing up an Activity test harness was out of scope for this dedup).
 
-- [ ] **Bump `versionCode`/`versionName` periodically.** Frozen at `1` / `0.1.0` since project
-      start. The Release workflow tags off `versionName` (`v<versionName>-<run_number>`), so
-      it's worth bumping on meaningful milestones rather than never.
+- [x] **Bump `versionCode`/`versionName` periodically.** Bumped `1`/`0.1.0` → `2`/`0.2.0`
+      in `app/build.gradle.kts` — this milestone bundles signed release builds, the QR
+      release-share screen, the CDN-pause/media-button fixes, and the new
+      `DefaultYoutubeCacheManager`/`DefaultPodcastRepository` test coverage.
 
 ---
 

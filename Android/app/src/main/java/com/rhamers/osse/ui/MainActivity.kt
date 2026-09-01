@@ -52,6 +52,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.rhamers.osse.player.MultiTrackService
+import com.rhamers.osse.player.TrackPlayer
 import com.rhamers.osse.ui.podcast.EpisodeDetailScreen
 import com.rhamers.osse.ui.podcast.EpisodeListScreen
 import com.rhamers.osse.ui.podcast.PodcastSearchScreen
@@ -289,13 +290,19 @@ class MainActivity : ComponentActivity() {
         binder = null
     }
 
+    // Applies the podcast's saved defaultSpeed and resumes from positionMs — the two
+    // playback defaults every podcast-episode play path must apply before track.play().
+    private fun applyPlaybackDefaults(track: TrackPlayer, podcastFeedUrl: String, positionMs: Long) {
+        val podcast = podcastViewModel.subscriptions.value.find { it.feedUrl == podcastFeedUrl }
+        podcast?.let { track.setSpeed(it.defaultSpeed) }
+        if (positionMs > 0) track.seekTo(positionMs)
+    }
+
     private fun playEpisode(episode: Episode) {
         val b = binder ?: return
         val track = b.getTrack(pendingTrackId) ?: b.addTrack(pendingTrackId)
         track.setSource(AudioSource.RssFeed(episode.enclosureUrl), episode.title)
-        val podcast = podcastViewModel.subscriptions.value.find { it.feedUrl == episode.podcastFeedUrl }
-        podcast?.let { track.setSpeed(it.defaultSpeed) }
-        if (episode.positionMs > 0) track.seekTo(episode.positionMs)
+        applyPlaybackDefaults(track, episode.podcastFeedUrl, episode.positionMs)
         track.play()
         currentScreen = Screen.Tracks
     }
@@ -331,12 +338,8 @@ class MainActivity : ComponentActivity() {
             val entity = withContext(Dispatchers.IO) {
                 OsseDatabase.get(this@MainActivity).episodeDao().getByEnclosureUrl(enclosureUrl)
             }
-            val podcast = entity?.let { ep ->
-                podcastViewModel.subscriptions.value.find { it.feedUrl == ep.podcastFeedUrl }
-            }
             val currentTrack = binder?.getTrack(TrackId.PODCAST) ?: return@launch
-            podcast?.let { currentTrack.setSpeed(it.defaultSpeed) }
-            entity?.let { if (it.positionMs > 0) currentTrack.seekTo(it.positionMs) }
+            entity?.let { applyPlaybackDefaults(currentTrack, it.podcastFeedUrl, it.positionMs) }
         }
     }
 }
