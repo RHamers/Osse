@@ -520,4 +520,61 @@ class MultiTrackServiceTest {
         assertFalse("no source loaded — podcast should not start playing", podcastPlaying)
         assertFalse("no source loaded — music should not start playing", musicPlaying)
     }
+
+    @Test
+    fun playbackStateIsPersistedAfterDebounceWindow() {
+        val db = OsseDatabase.get(ApplicationProvider.getApplicationContext())
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).apply {
+                setSource(AudioSource.RssFeed("https://example.com/ep.mp3"), "Episode 1")
+                seekTo(5_000L)
+            }
+        }
+        Thread.sleep(2_500) // > 2s debounce window
+        val row = runBlocking { db.playbackStateDao().getByTrackId("PODCAST") }
+        assertNotNull("expected a persisted playback_state row for PODCAST", row)
+        assertEquals("RSS_FEED", row!!.sourceType)
+        assertEquals("https://example.com/ep.mp3", row.sourceRef)
+        assertEquals("Episode 1", row.title)
+        assertEquals(5_000L, row.positionMs)
+    }
+
+    @Test
+    fun rssPodcastPositionIsStillWrittenToEpisodesTableAfterDebounce() {
+        val db = OsseDatabase.get(ApplicationProvider.getApplicationContext())
+        runBlocking {
+            db.podcastDao().upsert(
+                PodcastEntity(feedUrl = "https://feed.example.com", title = "Podcast",
+                    artworkUrl = null, description = null)
+            )
+            db.episodeDao().upsertAll(listOf(
+                EpisodeEntity(guid = "ep1", podcastFeedUrl = "https://feed.example.com",
+                    title = "Episode 1", enclosureUrl = "https://example.com/ep1.mp3",
+                    durationMs = 0L, showNotes = null, pubDateMs = 0L)
+            ))
+        }
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).apply {
+                setSource(AudioSource.RssFeed("https://example.com/ep1.mp3"), "Episode 1")
+                seekTo(12_000L)
+            }
+        }
+        Thread.sleep(2_500)
+        val episode = runBlocking { db.episodeDao().getByGuid("ep1") }
+        assertEquals(12_000L, episode!!.positionMs)
+    }
+
+    @Test
+    fun youtubeStreamSourceIsNotPersisted() {
+        val db = OsseDatabase.get(ApplicationProvider.getApplicationContext())
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.MUSIC).apply {
+                setSource(AudioSource.YoutubeStream("https://youtube.com/watch?v=abc"))
+                seekTo(3_000L)
+            }
+        }
+        Thread.sleep(2_500)
+        val row = runBlocking { db.playbackStateDao().getByTrackId("MUSIC") }
+        assertNull("an ephemeral YouTube CDN stream URL must never be persisted", row)
+    }
 }

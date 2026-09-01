@@ -16,8 +16,10 @@ import androidx.media3.common.Player
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.rhamers.osse.data.db.OsseDatabase
+import com.rhamers.osse.data.db.PlaybackStateEntity
 import com.rhamers.osse.model.AudioSource
 import com.rhamers.osse.model.TrackId
+import com.rhamers.osse.model.toPlaybackRef
 import com.rhamers.osse.player.DefaultYoutubeCacheManager
 import com.rhamers.osse.youtube.YoutubeAudio
 import kotlinx.coroutines.CoroutineScope
@@ -29,12 +31,16 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class MultiTrackService : MediaSessionService() {
 
     private val tracks = mutableMapOf<TrackId, TrackPlayer>()
+    private val persistenceJobs = mutableMapOf<TrackId, Job>()
     private var mediaSession: MediaSession? = null
     private val _activeTrackIds = MutableStateFlow<List<TrackId>>(emptyList())
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -211,6 +217,7 @@ class MultiTrackService : MediaSessionService() {
                     updateMediaSessionPlayer()
                 }
             })
+            startPlaybackStatePersistence(id, player)
             if (id == TrackId.PODCAST && mediaSession == null) {
                 mediaSession = MediaSession.Builder(this@MultiTrackService, player.player)
                     .setCallback(mediaButtonCallback)
@@ -254,6 +261,8 @@ class MultiTrackService : MediaSessionService() {
         fun clearTracksForTesting() {
             mediaSession?.release()
             mediaSession = null
+            persistenceJobs.values.forEach { it.cancel() }
+            persistenceJobs.clear()
             tracks.values.forEach { it.release() }
             tracks.clear()
             _activeTrackIds.value = emptyList()
@@ -311,22 +320,47 @@ class MultiTrackService : MediaSessionService() {
         )
         binder.addTrack(TrackId.PODCAST)
         binder.addTrack(TrackId.MUSIC)
-        startPositionSaver()
+
     }
 
-    private fun startPositionSaver() {
-        serviceScope.launch {
-            val db = OsseDatabase.get(this@MultiTrackService)
-            while (true) {
-                delay(10_000)
-                val track = tracks[TrackId.PODCAST] ?: continue
-                val state = track.state.value
-                if (!state.isPlaying) continue
-                val url = (state.source as? AudioSource.RssFeed)?.enclosureUrl ?: continue
-                if (state.positionMs <= 0) continue
-                withContext(Dispatchers.IO) {
-                    val entity = db.episodeDao().getByEnclosureUrl(url) ?: return@withContext
-                    if (!entity.completed) db.episodeDao().updatePosition(entity.guid, state.positionMs)
+    private fun startPlaybackStatePersistence(trackId: TrackId, player: TrackPlayer) {
+        val db = OsseDatabase.get(this)
+        persistenceJobs[trackId] = serviceScope.launch {
+            player.state
+                .map { Triple(it.source, it.title, it.positionMs) }
+                .distinctUntilChanged()
+                .debounce(2_000)
+                .collect { (source, title, positionMs) -> persistState(db, trackId, source, title, positionMs) }
+        }
+    }
+
+    private suspend fun persistState(
+        db: OsseDatabase,
+        trackId: TrackId,
+        source: AudioSource?,
+        title: String?,
+        positionMs: Long,
+    ) {
+        withContext(Dispatchers.IO) {
+            val ref = source?.toPlaybackRef()
+            if (ref == null) {
+                db.playbackStateDao().delete(trackId.name)
+            } else {
+                val (sourceType, sourceRef) = ref
+                db.playbackStateDao().upsert(
+                    PlaybackStateEntity(
+                        trackId = trackId.name,
+                        sourceType = sourceType,
+                        sourceRef = sourceRef,
+                        title = title,
+                        positionMs = positionMs,
+                        updatedAt = System.currentTimeMillis(),
+                    )
+                )
+            }
+            if (source is AudioSource.RssFeed) {
+                db.episodeDao().getByEnclosureUrl(source.enclosureUrl)?.let { ep ->
+                    if (!ep.completed) db.episodeDao().updatePosition(ep.guid, positionMs)
                 }
             }
         }
