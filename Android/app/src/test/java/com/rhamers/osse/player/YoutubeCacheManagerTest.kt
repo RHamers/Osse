@@ -6,6 +6,8 @@ import androidx.test.core.app.ApplicationProvider
 import com.rhamers.osse.data.db.OsseDatabase
 import com.rhamers.osse.data.db.YoutubeCacheEntity
 import com.rhamers.osse.model.AudioSource
+import com.rhamers.osse.youtube.FakePoTokenProvider
+import com.rhamers.osse.youtube.PoTokenProvider
 import com.rhamers.osse.youtube.VideoSearchResult
 import com.rhamers.osse.youtube.YoutubeExtractor
 import com.rhamers.osse.youtube.YoutubeVideoMetadata
@@ -53,25 +55,63 @@ class YoutubeCacheManagerTest {
 
     private fun manager(
         extractor: YoutubeExtractor = successExtractor(),
+        poTokenProvider: PoTokenProvider = FakePoTokenProvider(),
         thumbnailDownloader: suspend (String, String) -> Unit = { _, destPath ->
+            File(destPath).apply { parentFile?.mkdirs(); createNewFile() }
+        },
+        audioDownloader: suspend (String, String) -> Unit = { _, destPath ->
             File(destPath).apply { parentFile?.mkdirs(); createNewFile() }
         },
         onCached: ((String, String) -> Unit)? = null,
     ) = DefaultYoutubeCacheManager(
         extractor = extractor,
+        poTokenProvider = poTokenProvider,
         cacheDir = cacheDir,
         db = db,
         scope = testScope,
         ioDispatcher = UnconfinedTestDispatcher(testScope.testScheduler),
         downloadThumbnail = thumbnailDownloader,
+        downloadAudioFile = audioDownloader,
         onCached = onCached,
     )
 
     @Test
-    fun `resolveSource cache miss returns stream source`() = testScope.runTest {
+    fun `resolveSource cache miss returns stream source with pot token appended`() = testScope.runTest {
         val source = manager().resolveSource("vid1", "https://youtube.com/watch?v=vid1", metadata())
         assertTrue(source is AudioSource.YoutubeStream)
-        assertEquals("https://fake-stream.example.com/audio", (source as AudioSource.YoutubeStream).youtubeUrl)
+        assertEquals(
+            "https://fake-stream.example.com/audio?pot=fake-po-token",
+            (source as AudioSource.YoutubeStream).youtubeUrl,
+        )
+    }
+
+    @Test
+    fun `resolveSource appends pot with ampersand when url already has a query string`() = testScope.runTest {
+        val extractor = object : YoutubeExtractor {
+            override suspend fun extractAudioUrl(videoUrl: String) = "https://fake-stream.example.com/audio?itag=251"
+            // TODO(task-3): YoutubeExtractor.downloadAudio is still abstract on the interface
+            // until Task 3 removes it; drop this no-op override when that lands.
+            override suspend fun downloadAudio(videoUrl: String, outputPath: String) {}
+            override suspend fun searchVideos(query: String, maxResults: Int) = emptyList<VideoSearchResult>()
+            override fun playbackUserAgent() = "fake-ua"
+        }
+        val source = manager(extractor = extractor).resolveSource("vid1", "https://youtube.com/watch?v=vid1", metadata())
+        assertEquals(
+            "https://fake-stream.example.com/audio?itag=251&pot=fake-po-token",
+            (source as AudioSource.YoutubeStream).youtubeUrl,
+        )
+    }
+
+    @Test
+    fun `resolveSource propagates a PoTokenProvider failure`() = testScope.runTest {
+        var threw = false
+        try {
+            manager(poTokenProvider = FakePoTokenProvider(Result.failure(RuntimeException("botguard failed"))))
+                .resolveSource("vid1", "https://youtube.com/watch?v=vid1", metadata())
+        } catch (e: RuntimeException) {
+            threw = true
+        }
+        assertTrue("expected RuntimeException", threw)
     }
 
     @Test
@@ -83,6 +123,14 @@ class YoutubeCacheManagerTest {
     }
 
     @Test
+    fun `resolveSource cache hit does not call the token provider`() = testScope.runTest {
+        db.youtubeCacheDao().insert(cachedEntity("vid1"))
+        val tokenProvider = FakePoTokenProvider()
+        manager(poTokenProvider = tokenProvider).resolveSource("vid1", "https://youtube.com/watch?v=vid1", metadata())
+        assertEquals(0, tokenProvider.callCount)
+    }
+
+    @Test
     fun `resolveSource cache miss triggers background download and inserts row`() = testScope.runTest {
         manager().resolveSource("vid1", "https://youtube.com/watch?v=vid1", metadata())
         advanceUntilIdle()
@@ -90,29 +138,31 @@ class YoutubeCacheManagerTest {
     }
 
     @Test
-    fun `resolveSource invokes onCached with stream url and local path after background download`() = testScope.runTest {
+    fun `resolveSource invokes onCached with token-bearing stream url and local path`() = testScope.runTest {
         var capturedStream: String? = null
         var capturedPath: String? = null
         manager(onCached = { s, p -> capturedStream = s; capturedPath = p })
             .resolveSource("vid1", "https://youtube.com/watch?v=vid1", metadata())
         advanceUntilIdle()
-        assertEquals("https://fake-stream.example.com/audio", capturedStream)
+        assertEquals("https://fake-stream.example.com/audio?pot=fake-po-token", capturedStream)
         assertNotNull(capturedPath)
         assertTrue(capturedPath!!.endsWith("vid1.webm"))
     }
 
     @Test
-    fun `resolveSource does not invoke onCached when background download fails`() = testScope.runTest {
+    fun `resolveSource does not invoke onCached when background audio download fails`() = testScope.runTest {
         var called = false
-        manager(extractor = failingDownloadExtractor(), onCached = { _, _ -> called = true })
-            .resolveSource("vid1", "https://youtube.com/watch?v=vid1", metadata())
+        manager(
+            audioDownloader = { _, _ -> throw RuntimeException("disk full") },
+            onCached = { _, _ -> called = true },
+        ).resolveSource("vid1", "https://youtube.com/watch?v=vid1", metadata())
         advanceUntilIdle()
         assertFalse(called)
     }
 
     @Test
     fun `resolveSource failed background download leaves no row`() = testScope.runTest {
-        val m = manager(extractor = failingDownloadExtractor())
+        val m = manager(audioDownloader = { _, _ -> throw RuntimeException("disk full") })
         m.resolveSource("vid1", "https://youtube.com/watch?v=vid1", metadata())
         advanceUntilIdle()
         assertNull(db.youtubeCacheDao().getById("vid1"))
@@ -126,6 +176,16 @@ class YoutubeCacheManagerTest {
     }
 
     @Test
+    fun `downloadAndCache calls the audio downloader with the token-bearing url`() = testScope.runTest {
+        var capturedUrl: String? = null
+        manager(audioDownloader = { url, destPath ->
+            capturedUrl = url
+            File(destPath).apply { parentFile?.mkdirs(); createNewFile() }
+        }).downloadAndCache("vid1", "https://youtube.com/watch?v=vid1", metadata())
+        assertEquals("https://fake-stream.example.com/audio?pot=fake-po-token", capturedUrl)
+    }
+
+    @Test
     fun `downloadAndCache returns cached source when already present`() = testScope.runTest {
         db.youtubeCacheDao().insert(cachedEntity("vid1"))
         val source = manager().downloadAndCache("vid1", "https://youtube.com/watch?v=vid1", metadata())
@@ -134,8 +194,8 @@ class YoutubeCacheManagerTest {
     }
 
     @Test
-    fun `downloadAndCache propagates extractor failure`() = testScope.runTest {
-        val m = manager(extractor = failingDownloadExtractor())
+    fun `downloadAndCache propagates audio download failure`() = testScope.runTest {
+        val m = manager(audioDownloader = { _, _ -> throw RuntimeException("disk full") })
         var threw = false
         try {
             m.downloadAndCache("vid1", "https://youtube.com/watch?v=vid1", metadata())
@@ -178,19 +238,11 @@ class YoutubeCacheManagerTest {
 
     private fun successExtractor() = object : YoutubeExtractor {
         override suspend fun extractAudioUrl(videoUrl: String) = "https://fake-stream.example.com/audio"
-        override suspend fun downloadAudio(videoUrl: String, outputPath: String) {
-            File(outputPath).apply { parentFile?.mkdirs(); createNewFile() }
-        }
+        // TODO(task-3): YoutubeExtractor.downloadAudio is still abstract on the interface
+        // until Task 3 removes it; drop this no-op override when that lands.
+        override suspend fun downloadAudio(videoUrl: String, outputPath: String) {}
         override suspend fun searchVideos(query: String, maxResults: Int) =
             listOf(VideoSearchResult("vid1", "Lofi Beats", "Lofi Girl", 225L))
-        override fun playbackUserAgent() = "fake-ua"
-    }
-
-    private fun failingDownloadExtractor() = object : YoutubeExtractor {
-        override suspend fun extractAudioUrl(videoUrl: String) = "https://fake-stream.example.com/audio"
-        override suspend fun downloadAudio(videoUrl: String, outputPath: String) =
-            throw RuntimeException("disk full")
-        override suspend fun searchVideos(query: String, maxResults: Int) = emptyList<VideoSearchResult>()
         override fun playbackUserAgent() = "fake-ua"
     }
 }

@@ -3,6 +3,7 @@ package com.rhamers.osse.player
 import com.rhamers.osse.data.db.OsseDatabase
 import com.rhamers.osse.data.db.YoutubeCacheEntity
 import com.rhamers.osse.model.AudioSource
+import com.rhamers.osse.youtube.PoTokenProvider
 import com.rhamers.osse.youtube.VideoSearchResult
 import com.rhamers.osse.youtube.YoutubeExtractor
 import com.rhamers.osse.youtube.YoutubeVideoMetadata
@@ -18,15 +19,18 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.IOException
+import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
 class DefaultYoutubeCacheManager(
     private val extractor: YoutubeExtractor,
+    private val poTokenProvider: PoTokenProvider,
     private val cacheDir: File,
     private val db: OsseDatabase,
     private val scope: CoroutineScope,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val downloadThumbnail: suspend (url: String, destPath: String) -> Unit = ::httpDownloadFile,
+    private val downloadAudioFile: suspend (url: String, destPath: String) -> Unit = ::httpDownloadFile,
     private val onCached: ((streamUrl: String, localPath: String) -> Unit)? = null,
 ) : YoutubeCacheManager {
 
@@ -41,7 +45,7 @@ class DefaultYoutubeCacheManager(
         val cached = withContext(ioDispatcher) { db.youtubeCacheDao().getById(videoId) }
         if (cached != null) return AudioSource.YoutubeDownloaded(cached.localPath)
 
-        val streamUrl = withContext(ioDispatcher) { extractor.extractAudioUrl(videoUrl) }
+        val urlWithToken = resolveTokenedUrl(videoUrl)
         scope.launch {
             inFlightMutex.withLock {
                 if (inFlight.containsKey(videoId)) return@launch
@@ -49,13 +53,13 @@ class DefaultYoutubeCacheManager(
             }
             try {
                 val local = saveToCache(videoId, videoUrl, metadata) as AudioSource.YoutubeDownloaded
-                onCached?.invoke(streamUrl, local.localPath)
+                onCached?.invoke(urlWithToken, local.localPath)
             } catch (_: Exception) {
             } finally {
                 inFlightMutex.withLock { inFlight.remove(videoId) }
             }
         }
-        return AudioSource.YoutubeStream(streamUrl)
+        return AudioSource.YoutubeStream(urlWithToken)
     }
 
     override suspend fun downloadAndCache(
@@ -82,6 +86,17 @@ class DefaultYoutubeCacheManager(
         }
     }
 
+    // googlevideo now requires a GVS PoToken on every videoplayback request; it is a
+    // plain query parameter appended to the already-correctly-signed URL
+    // extractAudioUrl() returns — no changes to that URL's other parameters are needed.
+    // See docs/superpowers/specs/2026-09-15-youtube-potoken-design.md.
+    private suspend fun resolveTokenedUrl(videoUrl: String): String {
+        val rawUrl = withContext(ioDispatcher) { extractor.extractAudioUrl(videoUrl) }
+        val token = poTokenProvider.getToken()
+        val separator = if ('?' in rawUrl) "&" else "?"
+        return "$rawUrl${separator}pot=${URLEncoder.encode(token, "UTF-8")}"
+    }
+
     private suspend fun saveToCache(
         videoId: String,
         videoUrl: String,
@@ -90,7 +105,8 @@ class DefaultYoutubeCacheManager(
         val audioPath = File(cacheDir, "$videoId.webm").absolutePath
         val thumbPath = File(cacheDir, "$videoId.jpg").absolutePath
         try {
-            withContext(ioDispatcher) { extractor.downloadAudio(videoUrl, audioPath) }
+            val urlWithToken = resolveTokenedUrl(videoUrl)
+            downloadAudioFile(urlWithToken, audioPath)
             downloadThumbnail(metadata.thumbnailUrl, thumbPath)
             withContext(ioDispatcher) {
                 db.youtubeCacheDao().insert(
