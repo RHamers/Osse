@@ -9,14 +9,17 @@ import android.media.AudioManager
 import android.net.Uri
 import android.os.Binder
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
+import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent
 import androidx.core.content.ContextCompat
 import androidx.media3.common.Player
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import androidx.media3.session.SessionResult
 import com.rhamers.osse.data.db.OsseDatabase
 import com.rhamers.osse.data.db.PlaybackStateEntity
 import com.rhamers.osse.model.AudioSource
@@ -137,11 +140,23 @@ class MultiTrackService : MediaSessionService() {
 
     private var pendingPressJob: Job? = null
 
-    // Handles the earbud/headset media button. A single press toggles play/pause across
+    // Bluetooth AVRCP play/pause reaches the session as a direct Player command
+    // (onPlayerCommandRequest) issued by the "com.android.bluetooth" controller,
+    // completely independent of the legacy ACTION_MEDIA_BUTTON KeyEvent broadcast that
+    // onMediaButtonEvent handles — a real earbud press was observed to fire *both*, a few
+    // ms apart. Left alone, Media3's default onPlayerCommandRequest handling (RESULT_SUCCESS)
+    // applies that command directly to the single currently-bound session.player, bypassing
+    // our multi-track toggle entirely and fighting with the delayed toggle scheduled below.
+    // Tracks the most recent onMediaButtonEvent-driven press so the onPlayerCommandRequest
+    // handler can recognize that echo and skip re-triggering for the same physical press.
+    private var lastMediaButtonEventAtMs = 0L
+
+    // Handles the earbud/headset media button, from whichever of the two delivery paths
+    // above reaches us first for a given press. A single press toggles play/pause across
     // every track that has a source loaded; two presses within DOUBLE_PRESS_WINDOW_MS
     // fast-forward the podcast track 30 seconds instead, matching standard podcast-app
     // double-tap-to-skip behavior. This replaces Media3's default handling, which would
-    // otherwise forward the event only to the podcast player the session is bound to.
+    // otherwise act only on the one player the session is bound to.
     private val mediaButtonCallback = object : MediaSession.Callback {
         override fun onMediaButtonEvent(
             session: MediaSession,
@@ -150,6 +165,24 @@ class MultiTrackService : MediaSessionService() {
         ): Boolean {
             val event = keyEventFromIntent(intent) ?: return false
             return handleMediaButtonKeyEvent(event)
+        }
+
+        override fun onPlayerCommandRequest(
+            session: MediaSession,
+            controllerInfo: MediaSession.ControllerInfo,
+            playerCommand: Int
+        ): Int {
+            if (playerCommand != Player.COMMAND_PLAY_PAUSE) {
+                return super.onPlayerCommandRequest(session, controllerInfo, playerCommand)
+            }
+            val sinceMediaButtonEvent = SystemClock.elapsedRealtime() - lastMediaButtonEventAtMs
+            if (sinceMediaButtonEvent > MEDIA_BUTTON_ECHO_WINDOW_MS) {
+                onLogicalPlayPausePress()
+            }
+            // Always skip Media3's own default handling: either we just handled this
+            // press ourselves, or it's the Bluetooth echo of a press onMediaButtonEvent
+            // already scheduled a toggle for.
+            return SessionResult.RESULT_INFO_SKIPPED
         }
     }
 
@@ -170,6 +203,12 @@ class MultiTrackService : MediaSessionService() {
         // Only react to the initial press; ignore key-up and long-press auto-repeat.
         if (event.action != KeyEvent.ACTION_DOWN || event.repeatCount != 0) return true
 
+        lastMediaButtonEventAtMs = SystemClock.elapsedRealtime()
+        onLogicalPlayPausePress()
+        return true
+    }
+
+    private fun onLogicalPlayPausePress() {
         val pending = pendingPressJob
         if (pending != null) {
             pending.cancel()
@@ -182,7 +221,6 @@ class MultiTrackService : MediaSessionService() {
                 toggleAllActiveTracks()
             }
         }
-        return true
     }
 
     // The OS routes earbud/media-button events to the session whose player is playing;
@@ -296,6 +334,18 @@ class MultiTrackService : MediaSessionService() {
 
         fun simulateMediaButtonPress() {
             handleMediaButtonKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE))
+        }
+
+        // Simulates a direct Player command request from an external controller (this is
+        // how Bluetooth AVRCP play/pause actually reaches the session — see
+        // onPlayerCommandRequest's kdoc above). "com.android.bluetooth" mirrors the real
+        // controller package name observed on-device.
+        fun simulatePlayerCommandRequest(playerCommand: Int): Int {
+            val session = mediaSession ?: return SessionResult.RESULT_ERROR_INVALID_STATE
+            val controllerInfo = MediaSession.ControllerInfo.createTestOnlyControllerInfo(
+                "com.android.bluetooth", 0, 0, 1, 1, false, Bundle.EMPTY
+            )
+            return mediaButtonCallback.onPlayerCommandRequest(session, controllerInfo, playerCommand)
         }
 
         fun restorePlaybackStateForTesting() = restorePlaybackState()
@@ -550,5 +600,6 @@ class MultiTrackService : MediaSessionService() {
         private const val TAG = "MultiTrackService"
         private const val DOUBLE_PRESS_WINDOW_MS = 300L
         private const val PERIODIC_FLUSH_INTERVAL_MS = 2_000L
+        private const val MEDIA_BUTTON_ECHO_WINDOW_MS = 500L
     }
 }

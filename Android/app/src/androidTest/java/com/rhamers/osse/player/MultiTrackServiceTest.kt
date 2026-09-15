@@ -16,6 +16,7 @@ import com.rhamers.osse.data.db.PlaybackStateEntity
 import com.rhamers.osse.data.db.PodcastEntity
 import com.rhamers.osse.data.db.QueueItemEntity
 import androidx.media3.common.Player
+import androidx.media3.session.SessionResult
 import com.rhamers.osse.model.AudioSource
 import com.rhamers.osse.model.TrackId
 import kotlinx.coroutines.runBlocking
@@ -420,6 +421,70 @@ class MultiTrackServiceTest {
         assertEquals(40_000L, podcastPosition)
         assertTrue("podcast should keep playing, only its position should change", podcastPlaying)
         assertTrue("music should be unaffected by a double press", musicPlaying)
+    }
+
+    @Test
+    fun playerCommandRequestPlayPauseTogglesTracksWhenNoRecentMediaButtonEvent() {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).setSource(AudioSource.RssFeed("https://example.com/ep.mp3"))
+            binder.addTrack(TrackId.MUSIC).setSource(AudioSource.RssFeed("https://example.com/music.mp3"))
+            binder.simulatePlayerCommandRequest(Player.COMMAND_PLAY_PAUSE)
+        }
+        Thread.sleep(400)
+        instrumentation.runOnMainSync {}
+        var podcastPlaying = false
+        var musicPlaying = false
+        instrumentation.runOnMainSync {
+            podcastPlaying = binder.getTrack(TrackId.PODCAST)!!.player.playWhenReady
+            musicPlaying = binder.getTrack(TrackId.MUSIC)!!.player.playWhenReady
+        }
+        assertTrue("podcast should start playing from a bare command request", podcastPlaying)
+        assertTrue("music should start playing from a bare command request", musicPlaying)
+    }
+
+    @Test
+    fun playerCommandRequestPlayPauseIsSkippedAsEchoOfRecentMediaButtonEvent() {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).setSource(AudioSource.RssFeed("https://example.com/ep.mp3"))
+            binder.addTrack(TrackId.MUSIC).setSource(AudioSource.RssFeed("https://example.com/music.mp3"))
+            // A real Bluetooth earbud press fires onMediaButtonEvent and this command
+            // request within milliseconds of each other for the very same physical press.
+            binder.simulateMediaButtonPress()
+            binder.simulatePlayerCommandRequest(Player.COMMAND_PLAY_PAUSE)
+        }
+        Thread.sleep(400)
+        instrumentation.runOnMainSync {}
+        var podcastPosition = 0L
+        var podcastPlaying = false
+        var musicPlaying = false
+        instrumentation.runOnMainSync {
+            podcastPosition = binder.getTrack(TrackId.PODCAST)!!.state.value.positionMs
+            podcastPlaying = binder.getTrack(TrackId.PODCAST)!!.player.playWhenReady
+            musicPlaying = binder.getTrack(TrackId.MUSIC)!!.player.playWhenReady
+        }
+        assertTrue("podcast should play from a single logical press, not be treated as a double press", podcastPlaying)
+        assertTrue("music should play too, from the same single logical press", musicPlaying)
+        assertEquals("the echoed command request must not seek/forward as a double press", 0L, podcastPosition)
+    }
+
+    @Test
+    fun playerCommandRequestPlayPauseReturnsSkippedResult() {
+        var result = SessionResult.RESULT_SUCCESS
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST)
+            result = binder.simulatePlayerCommandRequest(Player.COMMAND_PLAY_PAUSE)
+        }
+        assertEquals(SessionResult.RESULT_INFO_SKIPPED, result)
+    }
+
+    @Test
+    fun playerCommandRequestNonPlayPauseCommandPassesThrough() {
+        var result = SessionResult.RESULT_ERROR_UNKNOWN
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST)
+            result = binder.simulatePlayerCommandRequest(Player.COMMAND_SEEK_FORWARD)
+        }
+        assertEquals(SessionResult.RESULT_SUCCESS, result)
     }
 
     @Test
