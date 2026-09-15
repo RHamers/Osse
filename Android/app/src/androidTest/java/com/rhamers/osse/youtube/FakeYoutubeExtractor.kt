@@ -14,4 +14,5 @@ class FakeYoutubeExtractor(
     }
     override suspend fun searchVideos(query: String, maxResults: Int): List<VideoSearchResult> =
         searchResult.getOrThrow()
+    override fun playbackUserAgent(): String = "FakeYoutubeExtractor/1.0"
 }

@@ -22,6 +22,16 @@ func ExtractAudioURL(videoURL string) (string, error) {
 	return extractAudioURL(&youtube.Client{}, videoURL)
 }
 
+// PlaybackUserAgent returns the User-Agent that must be sent when directly requesting a
+// URL returned by ExtractAudioURL. googlevideo's CDN ties a signed stream URL to the
+// player client identity that requested it (visible in the URL's own "c=" parameter,
+// e.g. "c=ANDROID_VR") and 403s requests from a mismatched client — this is
+// kkdai/youtube's youtube.DefaultClient, which ExtractAudioURL implicitly uses and which
+// has changed identity across library versions before.
+func PlaybackUserAgent() string {
+	return youtube.DefaultClient.UserAgent
+}
+
 func extractAudioURL(client youtubeClient, videoURL string) (string, error) {
 	video, err := client.GetVideo(videoURL)
 	if err != nil {

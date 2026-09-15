@@ -105,6 +105,25 @@ class TrackPlayerTest {
     }
 
     @Test
+    fun setSourceSwitchesToYoutubeUserAgentForYoutubeStream() {
+        val ytPlayer = TrackPlayer(
+            ApplicationProvider.getApplicationContext(),
+            TrackId.MUSIC,
+            youtubePlaybackUserAgent = { "fake-android-vr-ua" },
+        )
+        ytPlayer.setSource(AudioSource.YoutubeStream("https://stream.example.com/audio"))
+        assertEquals("fake-android-vr-ua", ytPlayer.activeUserAgent)
+        ytPlayer.release()
+    }
+
+    @Test
+    fun setSourceKeepsGenericUserAgentForNonYoutubeSources() {
+        val before = player.activeUserAgent
+        player.setSource(AudioSource.RssFeed("https://example.com/episode.mp3"))
+        assertEquals("a non-YouTube source must not touch the UA", before, player.activeUserAgent)
+    }
+
+    @Test
     fun seekToUpdatesPositionInState() {
         player.seekTo(30_000L)
         assertEquals(30_000L, player.state.value.positionMs)

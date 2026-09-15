@@ -177,7 +177,7 @@ private fun TrackPlayerCard(
             youtubeError = null
             try {
                 val source = cacheManager.resolveSource(videoId, videoUrl, metadata)
-                trackPlayer.setSource(source)
+                trackPlayer.setSource(source, metadata.title)
                 trackPlayer.play()
                 dismiss()
             } catch (e: Exception) {
@@ -194,7 +194,7 @@ private fun TrackPlayerCard(
             youtubeError = null
             try {
                 val source = cacheManager.downloadAndCache(videoId, videoUrl, metadata)
-                trackPlayer.setSource(source)
+                trackPlayer.setSource(source, metadata.title)
                 dismiss()
             } catch (e: Exception) {
                 youtubeError = e.message ?: "Download failed"

@@ -183,6 +183,7 @@ class YoutubeCacheManagerTest {
         }
         override suspend fun searchVideos(query: String, maxResults: Int) =
             listOf(VideoSearchResult("vid1", "Lofi Beats", "Lofi Girl", 225L))
+        override fun playbackUserAgent() = "fake-ua"
     }
 
     private fun failingDownloadExtractor() = object : YoutubeExtractor {
@@ -190,5 +191,6 @@ class YoutubeCacheManagerTest {
         override suspend fun downloadAudio(videoUrl: String, outputPath: String) =
             throw RuntimeException("disk full")
         override suspend fun searchVideos(query: String, maxResults: Int) = emptyList<VideoSearchResult>()
+        override fun playbackUserAgent() = "fake-ua"
     }
 }

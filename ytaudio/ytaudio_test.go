@@ -249,3 +249,15 @@ func TestDownloadAudio_SuccessWithFallbackFormat(t *testing.T) {
 		t.Fatalf("want %q, got %q", content, string(got))
 	}
 }
+
+// --- PlaybackUserAgent tests ---
+
+func TestPlaybackUserAgent_MatchesDefaultClient(t *testing.T) {
+	got := PlaybackUserAgent()
+	if got != youtube.DefaultClient.UserAgent {
+		t.Fatalf("PlaybackUserAgent() = %q, want youtube.DefaultClient.UserAgent %q", got, youtube.DefaultClient.UserAgent)
+	}
+	if got == "" {
+		t.Fatal("PlaybackUserAgent() must not be empty")
+	}
+}

@@ -21,4 +21,6 @@ object YoutubeAudio : YoutubeExtractor {
         val json = Ytaudio.searchVideosJSON(query, maxResults.toLong())
         gson.fromJson(json, Array<VideoSearchResult>::class.java).toList()
     }
+
+    override fun playbackUserAgent(): String = Ytaudio.playbackUserAgent()
 }
