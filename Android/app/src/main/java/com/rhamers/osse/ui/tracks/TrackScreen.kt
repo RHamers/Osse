@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeDown
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Forward30
 import androidx.compose.material.icons.filled.MoreVert
@@ -27,8 +29,6 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.TaskAlt
-import androidx.compose.material.icons.filled.VolumeDown
-import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -177,7 +177,8 @@ private fun TrackPlayerCard(
             youtubeError = null
             try {
                 val source = cacheManager.resolveSource(videoId, videoUrl, metadata)
-                trackPlayer.setSource(source)
+                trackPlayer.setSource(source, metadata.title)
+                trackPlayer.play()
                 dismiss()
             } catch (e: Exception) {
                 youtubeError = e.message ?: "Failed to extract audio URL"
@@ -193,7 +194,7 @@ private fun TrackPlayerCard(
             youtubeError = null
             try {
                 val source = cacheManager.downloadAndCache(videoId, videoUrl, metadata)
-                trackPlayer.setSource(source)
+                trackPlayer.setSource(source, metadata.title)
                 dismiss()
             } catch (e: Exception) {
                 youtubeError = e.message ?: "Download failed"
@@ -306,10 +307,7 @@ private fun TrackPlayerCard(
             confirmButton = {
                 if (isUrl) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        val urlId = remember(youtubeInput) {
-                            Regex("[?&]v=([^&]+)").find(youtubeInput)?.groupValues?.get(1)
-                                ?: UUID.randomUUID().toString()
-                        }
+                        val urlId = remember(youtubeInput) { extractYoutubeVideoId(youtubeInput.trim()) }
                         val urlMetadata = remember(urlId) {
                             YoutubeVideoMetadata(
                                 title = urlId,
@@ -481,14 +479,14 @@ fun TrackCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Icon(Icons.Default.VolumeDown, contentDescription = null, modifier = Modifier.size(20.dp))
+                Icon(Icons.AutoMirrored.Filled.VolumeDown, contentDescription = null, modifier = Modifier.size(20.dp))
                 Slider(
                     value = state.volume,
                     onValueChange = onVolumeChange,
                     valueRange = 0f..1f,
                     modifier = Modifier.weight(1f)
                 )
-                Icon(Icons.Default.VolumeUp, contentDescription = null, modifier = Modifier.size(20.dp))
+                Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null, modifier = Modifier.size(20.dp))
                 Text(
                     "${(state.volume * 100).roundToInt()}%",
                     style = MaterialTheme.typography.labelSmall,
@@ -558,6 +556,20 @@ private fun SearchResultRow(
 
 private fun isYoutubeUrl(input: String): Boolean =
     input.contains("youtube.com") || input.contains("youtu.be")
+
+// Handles the URL shapes users actually paste: full watch?v= links, youtu.be/ short
+// links (the default when sharing from the YouTube app), and /shorts/ links. None of
+// the latter two carry a v= query param, so a query-param-only regex silently falls
+// back to a random UUID — which then poisons the thumbnail URL and breaks caching.
+internal fun extractYoutubeVideoId(url: String): String {
+    val patterns = listOf(
+        Regex("[?&]v=([^&]+)"),
+        Regex("youtu\\.be/([^?&/]+)"),
+        Regex("/shorts/([^?&/]+)"),
+    )
+    return patterns.firstNotNullOfOrNull { it.find(url)?.groupValues?.get(1) }
+        ?: UUID.randomUUID().toString()
+}
 
 private fun formatDuration(secs: Long): String {
     val h = secs / 3600

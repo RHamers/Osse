@@ -6,17 +6,26 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.net.Uri
 import android.os.Binder
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
+import android.os.SystemClock
+import android.util.Log
 import android.view.KeyEvent
 import androidx.core.content.ContextCompat
+import androidx.media3.common.Player
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import androidx.media3.session.SessionResult
 import com.rhamers.osse.data.db.OsseDatabase
+import com.rhamers.osse.data.db.PlaybackStateEntity
 import com.rhamers.osse.model.AudioSource
+import com.rhamers.osse.model.PlaybackSourceType
 import com.rhamers.osse.model.TrackId
+import com.rhamers.osse.model.toPlaybackRef
 import com.rhamers.osse.player.DefaultYoutubeCacheManager
 import com.rhamers.osse.youtube.YoutubeAudio
 import kotlinx.coroutines.CoroutineScope
@@ -28,12 +37,17 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 
 class MultiTrackService : MediaSessionService() {
 
     private val tracks = mutableMapOf<TrackId, TrackPlayer>()
+    private val persistenceJobs = mutableMapOf<TrackId, Job>()
     private var mediaSession: MediaSession? = null
     private val _activeTrackIds = MutableStateFlow<List<TrackId>>(emptyList())
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -46,6 +60,15 @@ class MultiTrackService : MediaSessionService() {
     // Tracks which track IDs were playing when a transient focus loss occurred,
     // so we only resume those (not tracks the user had manually paused).
     private val pausedByFocusLoss = mutableSetOf<TrackId>()
+
+    // Tracks which track IDs have already had their stale playback_state row cleared for
+    // their current AudioSource.YoutubeStream source, so persistState() doesn't issue a
+    // redundant DELETE on every debounce/flush tick for the entire duration of a
+    // YoutubeStream's background download (there's nothing left to delete after the first
+    // tick). Cleared per-trackId whenever a persistable source is set, and reset entirely by
+    // clearTracksForTesting() so tests stay isolated.
+    private val youtubeStreamCleared: MutableSet<TrackId> =
+        java.util.Collections.synchronizedSet(mutableSetOf())
 
     // Holds the pending AudioFocusRequest on API 26+ so we can abandon it later.
     private var audioFocusRequestO: AudioFocusRequest? = null
@@ -117,11 +140,23 @@ class MultiTrackService : MediaSessionService() {
 
     private var pendingPressJob: Job? = null
 
-    // Handles the earbud/headset media button. A single press toggles play/pause across
+    // Bluetooth AVRCP play/pause reaches the session as a direct Player command
+    // (onPlayerCommandRequest) issued by the "com.android.bluetooth" controller,
+    // completely independent of the legacy ACTION_MEDIA_BUTTON KeyEvent broadcast that
+    // onMediaButtonEvent handles — a real earbud press was observed to fire *both*, a few
+    // ms apart. Left alone, Media3's default onPlayerCommandRequest handling (RESULT_SUCCESS)
+    // applies that command directly to the single currently-bound session.player, bypassing
+    // our multi-track toggle entirely and fighting with the delayed toggle scheduled below.
+    // Tracks the most recent onMediaButtonEvent-driven press so the onPlayerCommandRequest
+    // handler can recognize that echo and skip re-triggering for the same physical press.
+    private var lastMediaButtonEventAtMs = 0L
+
+    // Handles the earbud/headset media button, from whichever of the two delivery paths
+    // above reaches us first for a given press. A single press toggles play/pause across
     // every track that has a source loaded; two presses within DOUBLE_PRESS_WINDOW_MS
     // fast-forward the podcast track 30 seconds instead, matching standard podcast-app
     // double-tap-to-skip behavior. This replaces Media3's default handling, which would
-    // otherwise forward the event only to the podcast player the session is bound to.
+    // otherwise act only on the one player the session is bound to.
     private val mediaButtonCallback = object : MediaSession.Callback {
         override fun onMediaButtonEvent(
             session: MediaSession,
@@ -130,6 +165,24 @@ class MultiTrackService : MediaSessionService() {
         ): Boolean {
             val event = keyEventFromIntent(intent) ?: return false
             return handleMediaButtonKeyEvent(event)
+        }
+
+        override fun onPlayerCommandRequest(
+            session: MediaSession,
+            controllerInfo: MediaSession.ControllerInfo,
+            playerCommand: Int
+        ): Int {
+            if (playerCommand != Player.COMMAND_PLAY_PAUSE) {
+                return super.onPlayerCommandRequest(session, controllerInfo, playerCommand)
+            }
+            val sinceMediaButtonEvent = SystemClock.elapsedRealtime() - lastMediaButtonEventAtMs
+            if (sinceMediaButtonEvent > MEDIA_BUTTON_ECHO_WINDOW_MS) {
+                onLogicalPlayPausePress()
+            }
+            // Always skip Media3's own default handling: either we just handled this
+            // press ourselves, or it's the Bluetooth echo of a press onMediaButtonEvent
+            // already scheduled a toggle for.
+            return SessionResult.RESULT_INFO_SKIPPED
         }
     }
 
@@ -150,6 +203,12 @@ class MultiTrackService : MediaSessionService() {
         // Only react to the initial press; ignore key-up and long-press auto-repeat.
         if (event.action != KeyEvent.ACTION_DOWN || event.repeatCount != 0) return true
 
+        lastMediaButtonEventAtMs = SystemClock.elapsedRealtime()
+        onLogicalPlayPausePress()
+        return true
+    }
+
+    private fun onLogicalPlayPausePress() {
         val pending = pendingPressJob
         if (pending != null) {
             pending.cancel()
@@ -162,7 +221,25 @@ class MultiTrackService : MediaSessionService() {
                 toggleAllActiveTracks()
             }
         }
-        return true
+    }
+
+    // The OS routes earbud/media-button events to the session whose player is playing;
+    // the platform session only mirrors the one player it is bound to. Bound solely to
+    // the idle podcast player during music-only playback, the app looks silent to the
+    // system and onMediaButtonEvent never fires. Rebind the session to whichever player
+    // is actually playing (podcast wins when both are) so button events reach us.
+    private fun updateMediaSessionPlayer() {
+        val session = mediaSession ?: return
+        val podcast = tracks[TrackId.PODCAST]?.player
+        val music = tracks[TrackId.MUSIC]?.player
+        val target = when {
+            podcast != null && podcast.playWhenReady -> podcast
+            music != null && music.playWhenReady -> music
+            // Nothing playing: keep the current binding so the session retains the
+            // paused player's state and stays the most-recent target for routing.
+            else -> return
+        }
+        if (session.player !== target) session.setPlayer(target)
     }
 
     private fun toggleAllActiveTracks() {
@@ -186,6 +263,12 @@ class MultiTrackService : MediaSessionService() {
             tracks[id] = player
             _activeTrackIds.value = _activeTrackIds.value + id
             player.onPlayRequested = { requestAudioFocus() }
+            player.player.addListener(object : Player.Listener {
+                override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                    updateMediaSessionPlayer()
+                }
+            })
+            startPlaybackStatePersistence(id, player)
             if (id == TrackId.PODCAST && mediaSession == null) {
                 mediaSession = MediaSession.Builder(this@MultiTrackService, player.player)
                     .setCallback(mediaButtonCallback)
@@ -229,10 +312,13 @@ class MultiTrackService : MediaSessionService() {
         fun clearTracksForTesting() {
             mediaSession?.release()
             mediaSession = null
+            persistenceJobs.values.forEach { it.cancel() }
+            persistenceJobs.clear()
             tracks.values.forEach { it.release() }
             tracks.clear()
             _activeTrackIds.value = emptyList()
             pausedByFocusLoss.clear()
+            youtubeStreamCleared.clear()
         }
 
         fun simulateAudioFocusChange(focusChange: Int) {
@@ -249,6 +335,22 @@ class MultiTrackService : MediaSessionService() {
         fun simulateMediaButtonPress() {
             handleMediaButtonKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE))
         }
+
+        // Simulates a direct Player command request from an external controller (this is
+        // how Bluetooth AVRCP play/pause actually reaches the session — see
+        // onPlayerCommandRequest's kdoc above). "com.android.bluetooth" mirrors the real
+        // controller package name observed on-device.
+        fun simulatePlayerCommandRequest(playerCommand: Int): Int {
+            val session = mediaSession ?: return SessionResult.RESULT_ERROR_INVALID_STATE
+            val controllerInfo = MediaSession.ControllerInfo.createTestOnlyControllerInfo(
+                "com.android.bluetooth", 0, 0, 1, 1, false, Bundle.EMPTY
+            )
+            return mediaButtonCallback.onPlayerCommandRequest(session, controllerInfo, playerCommand)
+        }
+
+        fun restorePlaybackStateForTesting() = restorePlaybackState()
+
+        fun sessionPlayerForTesting(): Player? = mediaSession?.player
     }
 
     private val binder = LocalBinder()
@@ -284,22 +386,163 @@ class MultiTrackService : MediaSessionService() {
         )
         binder.addTrack(TrackId.PODCAST)
         binder.addTrack(TrackId.MUSIC)
-        startPositionSaver()
+        restorePlaybackState()
+        startPeriodicPlaybackFlush()
     }
 
-    private fun startPositionSaver() {
+    // Reloads each track's persisted source/title/position from `playback_state` so
+    // playback survives process death. Never calls .play() — restored tracks stay paused
+    // until a media-button press (or other explicit user action) resumes them via
+    // toggleAllActiveTracks(). Runs synchronously on Dispatchers.IO so onCreate() doesn't
+    // return until tracks are loaded, avoiding a window where the UI observes empty tracks.
+    private fun restorePlaybackState() {
+        val db = OsseDatabase.get(this)
+
+        data class Restored(
+            val trackId: TrackId,
+            val source: AudioSource,
+            val title: String?,
+            val positionMs: Long,
+            val speed: Float?,
+        )
+
+        val toRestore = try {
+            runBlocking(Dispatchers.IO) {
+                listOf(TrackId.PODCAST, TrackId.MUSIC).mapNotNull { trackId ->
+                    val row = db.playbackStateDao().getByTrackId(trackId.name) ?: return@mapNotNull null
+                    val source: AudioSource? = when (row.sourceType) {
+                        PlaybackSourceType.RSS_FEED -> AudioSource.RssFeed(row.sourceRef)
+                        PlaybackSourceType.LOCAL_FILE -> AudioSource.LocalFile(Uri.parse(row.sourceRef))
+                        PlaybackSourceType.YOUTUBE -> {
+                            val cached = db.youtubeCacheDao().getById(row.sourceRef)
+                            if (cached == null) {
+                                db.playbackStateDao().delete(trackId.name)
+                                null
+                            } else {
+                                AudioSource.YoutubeDownloaded(cached.localPath)
+                            }
+                        }
+                        else -> {
+                            // Unrecognized/corrupt sourceType: nothing we can restore from it,
+                            // and it should never be left behind for a future restore attempt
+                            // to trip over either.
+                            db.playbackStateDao().delete(trackId.name)
+                            null
+                        }
+                    }
+                    source ?: return@mapNotNull null
+                    val speed = if (trackId == TrackId.PODCAST && source is AudioSource.RssFeed) {
+                        db.episodeDao().getByEnclosureUrl(source.enclosureUrl)
+                            ?.podcastFeedUrl
+                            ?.let { db.podcastDao().getByUrl(it) }
+                            ?.defaultSpeed
+                    } else {
+                        null
+                    }
+                    Restored(trackId, source, row.title, row.positionMs, speed)
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "restorePlaybackState failed", e)
+            emptyList()
+        }
+
+        toRestore.forEach { r ->
+            val track = tracks[r.trackId] ?: return@forEach
+            // prepare = false: restoring on a bare service (re)creation — including an
+            // unattended OS restart after a low-memory kill — must not start network
+            // buffering the user never asked for. TrackPlayer.play() already prepares from
+            // STATE_IDLE, so the track prepares correctly the moment playback is actually
+            // requested.
+            track.setSource(r.source, r.title, prepare = false)
+            track.seekTo(r.positionMs)
+            r.speed?.let { track.setSpeed(it) }
+        }
+    }
+
+    // The debounce(2s) collector in startPlaybackStatePersistence() only emits once a track's
+    // state goes quiet for 2s. TrackPlayer emits a fresh positionMs into its state StateFlow
+    // every 500ms while actually playing, so the upstream never goes quiet during an
+    // uninterrupted play session — the debounced collector alone would never persist a
+    // currently-playing track's position, leaving it arbitrarily stale for the process-death
+    // resume scenario this feature exists for. This periodic flush persists every currently
+    // playing track's state on a fixed cadence regardless of whether the value actually
+    // changed, independent of the debounce path. It re-reads `tracks` fresh on every tick
+    // rather than capturing a TrackPlayer/StateFlow reference once, so it naturally survives
+    // this file's clearTracksForTesting() + addTrack() re-creation pattern without needing
+    // per-instance wiring.
+    private fun startPeriodicPlaybackFlush() {
+        val db = OsseDatabase.get(this)
         serviceScope.launch {
-            val db = OsseDatabase.get(this@MultiTrackService)
             while (true) {
-                delay(10_000)
-                val track = tracks[TrackId.PODCAST] ?: continue
-                val state = track.state.value
-                if (!state.isPlaying) continue
-                val url = (state.source as? AudioSource.RssFeed)?.enclosureUrl ?: continue
-                if (state.positionMs <= 0) continue
-                withContext(Dispatchers.IO) {
-                    val entity = db.episodeDao().getByEnclosureUrl(url) ?: return@withContext
-                    if (!entity.completed) db.episodeDao().updatePosition(entity.guid, state.positionMs)
+                delay(PERIODIC_FLUSH_INTERVAL_MS)
+                // One tick's DAO failure must not crash the root SupervisorJob scope (it has
+                // no exception handler) nor permanently kill this loop — log and let the next
+                // delay()/tick proceed.
+                try {
+                    TrackId.entries.forEach { trackId ->
+                        val state = tracks[trackId]?.state?.value ?: return@forEach
+                        if (state.isPlaying) {
+                            persistState(db, trackId, state.source, state.title, state.positionMs)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "periodic playback flush tick failed", e)
+                }
+            }
+        }
+    }
+
+    private fun startPlaybackStatePersistence(trackId: TrackId, player: TrackPlayer) {
+        val db = OsseDatabase.get(this)
+        persistenceJobs[trackId] = serviceScope.launch {
+            player.state
+                .map { Triple(it.source, it.title, it.positionMs) }
+                .distinctUntilChanged()
+                .debounce(2_000)
+                .collect { (source, title, positionMs) -> persistState(db, trackId, source, title, positionMs) }
+        }
+    }
+
+    private suspend fun persistState(
+        db: OsseDatabase,
+        trackId: TrackId,
+        source: AudioSource?,
+        title: String?,
+        positionMs: Long,
+    ) {
+        withContext(Dispatchers.IO) {
+            val ref = source?.toPlaybackRef()
+            if (ref == null) {
+                if (source is AudioSource.YoutubeStream) {
+                    // toPlaybackRef() always returns null for YoutubeStream (its CDN URL is
+                    // ephemeral), so without this guard every debounce/flush tick for the
+                    // entire duration of its background download would issue a DELETE for
+                    // no reason — there's nothing left to delete after the first tick clears
+                    // any stale row from a previously persisted source.
+                    if (trackId in youtubeStreamCleared) return@withContext
+                    youtubeStreamCleared += trackId
+                }
+                db.playbackStateDao().delete(trackId.name)
+            } else {
+                youtubeStreamCleared -= trackId
+                val (sourceType, sourceRef) = ref
+                db.playbackStateDao().upsert(
+                    PlaybackStateEntity(
+                        trackId = trackId.name,
+                        sourceType = sourceType,
+                        sourceRef = sourceRef,
+                        title = title,
+                        positionMs = positionMs,
+                        updatedAt = System.currentTimeMillis(),
+                    )
+                )
+            }
+            if (source is AudioSource.RssFeed) {
+                db.episodeDao().getByEnclosureUrl(source.enclosureUrl)?.let { ep ->
+                    if (!ep.completed && positionMs > 0) {
+                        db.episodeDao().updatePosition(ep.guid, positionMs)
+                    }
                 }
             }
         }
@@ -354,6 +597,9 @@ class MultiTrackService : MediaSessionService() {
     }
 
     companion object {
+        private const val TAG = "MultiTrackService"
         private const val DOUBLE_PRESS_WINDOW_MS = 300L
+        private const val PERIODIC_FLUSH_INTERVAL_MS = 2_000L
+        private const val MEDIA_BUTTON_ECHO_WINDOW_MS = 500L
     }
 }

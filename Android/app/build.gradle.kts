@@ -22,8 +22,8 @@ android {
         applicationId = "com.rhamers.osse"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -36,6 +36,23 @@ android {
         buildConfigField("String", "PODCAST_INDEX_API_SECRET", "\"${localProps["podcastindex.apiSecret"] ?: ""}\"")
     }
 
+    // Release signing: reads from local.properties locally, env vars in CI.
+    // Absent both (e.g. a fresh clone), the release build falls back to unsigned.
+    val keystorePath = localProps.getProperty("keystore.path") ?: System.getenv("KEYSTORE_PATH")
+    if (keystorePath != null) {
+        val storePass = localProps.getProperty("keystore.password") ?: System.getenv("KEYSTORE_PASSWORD")
+        signingConfigs {
+            create("release") {
+                storeFile = file(keystorePath)
+                storePassword = storePass
+                keyAlias = localProps.getProperty("keystore.alias") ?: System.getenv("KEYSTORE_ALIAS")
+                keyPassword = localProps.getProperty("keystore.keyPassword")
+                    ?: System.getenv("KEYSTORE_KEY_PASSWORD")
+                    ?: storePass
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -46,6 +63,7 @@ android {
             ndk {
                 debugSymbolLevel = "FULL"
             }
+            signingConfig = signingConfigs.findByName("release")
         }
         debug {
             // x86_64 emulator support for development (release stays arm64-only per ADR-006)
@@ -128,6 +146,9 @@ dependencies {
     // Drag-to-reorder
     implementation(libs.reorderable)
 
+    // QR code generation (release-share screen)
+    implementation(libs.qrcode.kotlin)
+
     // ytaudio gomobile AAR (see ADR-002)
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar", "*.jar"))))
 
@@ -136,6 +157,7 @@ dependencies {
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.okhttp.mockwebserver)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.test.rules)
     androidTestImplementation(libs.androidx.espresso.core)

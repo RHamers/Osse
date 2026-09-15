@@ -15,8 +15,10 @@ import com.rhamers.osse.model.AudioSource
 import com.rhamers.osse.model.TrackId
 import com.rhamers.osse.model.TrackState
 import com.rhamers.osse.model.toMediaItem
+import com.rhamers.osse.youtube.YoutubeAudio
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -30,24 +32,28 @@ class TrackPlayer(
     context: Context,
     val trackId: TrackId,
     private val retryDelaysMs: LongArray = DEFAULT_RETRY_DELAYS_MS,
+    // Overridable so unit tests can verify the switch below without touching the real
+    // gomobile/JNI binding (YoutubeAudio.playbackUserAgent(), which needs a real device).
+    private val youtubePlaybackUserAgent: () -> String = { YoutubeAudio.playbackUserAgent() },
 ) {
+
+    // YouTube's CDN ties a signed stream URL to the player-client identity that requested
+    // it and 403s a mismatched User-Agent; ExoPlayer's own default "ExoPlayer/..." UA
+    // always gets rejected outright. This factory starts with a generic browser UA (fine
+    // for RSS/local sources) and is switched to the extraction library's actual client UA
+    // in setSource() whenever the source is a YoutubeStream — see
+    // YoutubeAudio.playbackUserAgent().
+    private val httpDataSourceFactory = DefaultHttpDataSource.Factory()
+        .setUserAgent(BROWSER_USER_AGENT)
+
+    // Mirrors whatever UA is currently set on httpDataSourceFactory (which has no public
+    // getter) so tests can assert on it.
+    internal var activeUserAgent: String = BROWSER_USER_AGENT
+        private set
 
     internal val player: ExoPlayer = ExoPlayer.Builder(context)
         .setMediaSourceFactory(
-            // YouTube CDN returns 403 when ExoPlayer's default "ExoPlayer/..." User-Agent
-            // is used. A browser-like UA is accepted by the CDN for the signed URLs that
-            // kkdai/youtube extracts.
-            DefaultMediaSourceFactory(
-                DefaultDataSource.Factory(
-                    context,
-                    DefaultHttpDataSource.Factory()
-                        .setUserAgent(
-                            "Mozilla/5.0 (Linux; Android 14) " +
-                            "AppleWebKit/537.36 (KHTML, like Gecko) " +
-                            "Chrome/124.0.0.0 Mobile Safari/537.36"
-                        )
-                )
-            )
+            DefaultMediaSourceFactory(DefaultDataSource.Factory(context, httpDataSourceFactory))
         )
         .setAudioAttributes(
             AudioAttributes.Builder().setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(),
@@ -67,6 +73,9 @@ class TrackPlayer(
 
     private var retryAttempt = 0
     internal val currentRetryAttempt: Int get() = retryAttempt
+
+    private var pendingRetryJob: Job? = null
+    internal val hasPendingRetry: Boolean get() = pendingRetryJob?.isActive == true
 
     init {
         player.addListener(object : Player.Listener {
@@ -117,10 +126,23 @@ class TrackPlayer(
         }
     }
 
-    fun setSource(source: AudioSource, title: String? = null) {
+    // prepare = false lets a caller load a source (e.g. restoring after process death) without
+    // triggering ExoPlayer's immediate network buffering. The track still prepares correctly
+    // the moment playback is actually requested: play() already handles
+    // STATE_IDLE -> player.prepare() below.
+    fun setSource(source: AudioSource, title: String? = null, prepare: Boolean = true) {
+        // A retry scheduled for the old source must not fire against the new one,
+        // and a fresh source deserves a fresh retry budget.
+        pendingRetryJob?.cancel()
+        pendingRetryJob = null
+        retryAttempt = 0
+        if (source is AudioSource.YoutubeStream) {
+            activeUserAgent = youtubePlaybackUserAgent()
+            httpDataSourceFactory.setUserAgent(activeUserAgent)
+        }
         _state.value = _state.value.copy(source = source, title = title)
         player.setMediaItem(source.toMediaItem())
-        player.prepare()
+        if (prepare) player.prepare()
     }
 
     fun setVolume(volume: Float) {
@@ -137,6 +159,10 @@ class TrackPlayer(
     }
 
     fun play() {
+        // An explicit play already re-prepares below; letting a scheduled retry fire
+        // afterwards would seek back to the error position and restart buffering.
+        pendingRetryJob?.cancel()
+        pendingRetryJob = null
         onPlayRequested?.invoke()
         when (player.playbackState) {
             Player.STATE_IDLE -> player.prepare()
@@ -185,17 +211,23 @@ class TrackPlayer(
         val delayMs = retryDelaysMs[retryAttempt]
         retryAttempt++
         val resumePosition = player.currentPosition
-        val shouldResume = player.playWhenReady
-        scope.launch {
+        pendingRetryJob = scope.launch {
             delay(delayMs)
+            // playWhenReady survives errors and reflects the user's latest intent —
+            // possibly changed since the error was captured. Re-preparing is enough:
+            // playback resumes iff it is still true. Writing a value captured at error
+            // time would revert a play/pause press made during the backoff window.
             player.seekTo(resumePosition)
             player.prepare()
-            player.playWhenReady = shouldResume
         }
     }
 
     companion object {
         private const val TAG = "TrackPlayer"
         private val DEFAULT_RETRY_DELAYS_MS = longArrayOf(2_000L, 5_000L, 10_000L)
+        private const val BROWSER_USER_AGENT =
+            "Mozilla/5.0 (Linux; Android 14) " +
+            "AppleWebKit/537.36 (KHTML, like Gecko) " +
+            "Chrome/124.0.0.0 Mobile Safari/537.36"
     }
 }

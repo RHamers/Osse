@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Podcasts
+import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.VideoLibrary
 import com.rhamers.osse.ui.youtube.YoutubeLibraryScreen
 import androidx.compose.material3.Icon
@@ -51,10 +52,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.rhamers.osse.player.MultiTrackService
+import com.rhamers.osse.player.TrackPlayer
 import com.rhamers.osse.ui.podcast.EpisodeDetailScreen
 import com.rhamers.osse.ui.podcast.EpisodeListScreen
 import com.rhamers.osse.ui.podcast.PodcastSearchScreen
 import com.rhamers.osse.ui.podcast.PodcastViewModel
+import com.rhamers.osse.ui.share.ReleaseQrScreen
 import com.rhamers.osse.ui.theme.OsseTheme
 import com.rhamers.osse.ui.tracks.TrackScreen
 import com.rhamers.osse.ui.upnext.UpNextScreen
@@ -99,6 +102,7 @@ class MainActivity : ComponentActivity() {
 
         filePickerLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri != null) {
+                grantPersistableReadPermission(contentResolver, uri)
                 binder?.getTrack(pendingTrackId)?.setSource(AudioSource.LocalFile(uri))
             }
         }
@@ -148,6 +152,9 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }) {
                                     Icon(Icons.Default.BugReport, contentDescription = "Export logs")
+                                }
+                                IconButton(onClick = { currentScreen = Screen.ReleaseQr }) {
+                                    Icon(Icons.Default.QrCode2, contentDescription = "Show release QR code")
                                 }
                             }
                         )
@@ -251,6 +258,11 @@ class MainActivity : ComponentActivity() {
                             )
                         }
 
+                        Screen.ReleaseQr -> ReleaseQrScreen(
+                            onBack = { currentScreen = Screen.Tracks },
+                            contentPadding = contentPadding
+                        )
+
                         Screen.YoutubeLibrary -> YoutubeLibraryScreen(
                             cachedVideos = OsseDatabase.get(this).youtubeCacheDao().getAll(),
                             onPlay = { entity ->
@@ -279,13 +291,19 @@ class MainActivity : ComponentActivity() {
         binder = null
     }
 
+    // Applies the podcast's saved defaultSpeed and resumes from positionMs — the two
+    // playback defaults every podcast-episode play path must apply before track.play().
+    private fun applyPlaybackDefaults(track: TrackPlayer, podcastFeedUrl: String, positionMs: Long) {
+        val podcast = podcastViewModel.subscriptions.value.find { it.feedUrl == podcastFeedUrl }
+        podcast?.let { track.setSpeed(it.defaultSpeed) }
+        if (positionMs > 0) track.seekTo(positionMs)
+    }
+
     private fun playEpisode(episode: Episode) {
         val b = binder ?: return
         val track = b.getTrack(pendingTrackId) ?: b.addTrack(pendingTrackId)
         track.setSource(AudioSource.RssFeed(episode.enclosureUrl), episode.title)
-        val podcast = podcastViewModel.subscriptions.value.find { it.feedUrl == episode.podcastFeedUrl }
-        podcast?.let { track.setSpeed(it.defaultSpeed) }
-        if (episode.positionMs > 0) track.seekTo(episode.positionMs)
+        applyPlaybackDefaults(track, episode.podcastFeedUrl, episode.positionMs)
         track.play()
         currentScreen = Screen.Tracks
     }
@@ -321,12 +339,8 @@ class MainActivity : ComponentActivity() {
             val entity = withContext(Dispatchers.IO) {
                 OsseDatabase.get(this@MainActivity).episodeDao().getByEnclosureUrl(enclosureUrl)
             }
-            val podcast = entity?.let { ep ->
-                podcastViewModel.subscriptions.value.find { it.feedUrl == ep.podcastFeedUrl }
-            }
             val currentTrack = binder?.getTrack(TrackId.PODCAST) ?: return@launch
-            podcast?.let { currentTrack.setSpeed(it.defaultSpeed) }
-            entity?.let { if (it.positionMs > 0) currentTrack.seekTo(it.positionMs) }
+            entity?.let { applyPlaybackDefaults(currentTrack, it.podcastFeedUrl, it.positionMs) }
         }
     }
 }

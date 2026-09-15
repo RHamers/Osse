@@ -2,6 +2,7 @@ package com.rhamers.osse.model
 
 import android.net.Uri
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -66,5 +67,34 @@ class AudioSourceTest {
             "track.mp3",
             AudioSource.YoutubeDownloaded("/data/user/0/com.rhamers.osse/files/audio/track.mp3").toDisplayString()
         )
+    }
+
+    // toPlaybackRef
+
+    @Test
+    fun toPlaybackRef_rssFeedUsesEnclosureUrlAsRef() {
+        val source = AudioSource.RssFeed("https://example.com/ep1.mp3")
+        assertEquals("RSS_FEED" to "https://example.com/ep1.mp3", source.toPlaybackRef())
+    }
+
+    @Test
+    fun toPlaybackRef_localFileUsesUriStringAsRef() {
+        val uri = Uri.parse("content://media/external/audio/media/1234")
+        val source = AudioSource.LocalFile(uri)
+        assertEquals("LOCAL_FILE" to uri.toString(), source.toPlaybackRef())
+    }
+
+    @Test
+    fun toPlaybackRef_youtubeDownloadedDerivesVideoIdFromCachedFilename() {
+        val source = AudioSource.YoutubeDownloaded(
+            "/data/user/0/com.rhamers.osse/files/youtube/dQw4w9WgXcQ.webm"
+        )
+        assertEquals("YOUTUBE" to "dQw4w9WgXcQ", source.toPlaybackRef())
+    }
+
+    @Test
+    fun toPlaybackRef_youtubeStreamReturnsNull() {
+        val source = AudioSource.YoutubeStream("https://rr.googlevideo.com/expiring-url")
+        assertNull(source.toPlaybackRef())
     }
 }

@@ -5,14 +5,18 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.media.AudioManager
+import android.net.Uri
 import android.os.IBinder
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.rhamers.osse.data.db.EpisodeEntity
 import com.rhamers.osse.data.db.OsseDatabase
+import com.rhamers.osse.data.db.PlaybackStateEntity
 import com.rhamers.osse.data.db.PodcastEntity
 import com.rhamers.osse.data.db.QueueItemEntity
+import androidx.media3.common.Player
+import androidx.media3.session.SessionResult
 import com.rhamers.osse.model.AudioSource
 import com.rhamers.osse.model.TrackId
 import kotlinx.coroutines.runBlocking
@@ -22,6 +26,8 @@ import org.junit.Before
 import org.junit.BeforeClass
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.File
+import java.io.FileOutputStream
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -418,6 +424,154 @@ class MultiTrackServiceTest {
     }
 
     @Test
+    fun playerCommandRequestPlayPauseTogglesTracksWhenNoRecentMediaButtonEvent() {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).setSource(AudioSource.RssFeed("https://example.com/ep.mp3"))
+            binder.addTrack(TrackId.MUSIC).setSource(AudioSource.RssFeed("https://example.com/music.mp3"))
+            binder.simulatePlayerCommandRequest(Player.COMMAND_PLAY_PAUSE)
+        }
+        Thread.sleep(400)
+        instrumentation.runOnMainSync {}
+        var podcastPlaying = false
+        var musicPlaying = false
+        instrumentation.runOnMainSync {
+            podcastPlaying = binder.getTrack(TrackId.PODCAST)!!.player.playWhenReady
+            musicPlaying = binder.getTrack(TrackId.MUSIC)!!.player.playWhenReady
+        }
+        assertTrue("podcast should start playing from a bare command request", podcastPlaying)
+        assertTrue("music should start playing from a bare command request", musicPlaying)
+    }
+
+    @Test
+    fun playerCommandRequestPlayPauseIsSkippedAsEchoOfRecentMediaButtonEvent() {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).setSource(AudioSource.RssFeed("https://example.com/ep.mp3"))
+            binder.addTrack(TrackId.MUSIC).setSource(AudioSource.RssFeed("https://example.com/music.mp3"))
+            // A real Bluetooth earbud press fires onMediaButtonEvent and this command
+            // request within milliseconds of each other for the very same physical press.
+            binder.simulateMediaButtonPress()
+            binder.simulatePlayerCommandRequest(Player.COMMAND_PLAY_PAUSE)
+        }
+        Thread.sleep(400)
+        instrumentation.runOnMainSync {}
+        var podcastPosition = 0L
+        var podcastPlaying = false
+        var musicPlaying = false
+        instrumentation.runOnMainSync {
+            podcastPosition = binder.getTrack(TrackId.PODCAST)!!.state.value.positionMs
+            podcastPlaying = binder.getTrack(TrackId.PODCAST)!!.player.playWhenReady
+            musicPlaying = binder.getTrack(TrackId.MUSIC)!!.player.playWhenReady
+        }
+        assertTrue("podcast should play from a single logical press, not be treated as a double press", podcastPlaying)
+        assertTrue("music should play too, from the same single logical press", musicPlaying)
+        assertEquals("the echoed command request must not seek/forward as a double press", 0L, podcastPosition)
+    }
+
+    @Test
+    fun playerCommandRequestPlayPauseReturnsSkippedResult() {
+        var result = SessionResult.RESULT_SUCCESS
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST)
+            result = binder.simulatePlayerCommandRequest(Player.COMMAND_PLAY_PAUSE)
+        }
+        assertEquals(SessionResult.RESULT_INFO_SKIPPED, result)
+    }
+
+    @Test
+    fun playerCommandRequestNonPlayPauseCommandPassesThrough() {
+        var result = SessionResult.RESULT_ERROR_UNKNOWN
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST)
+            result = binder.simulatePlayerCommandRequest(Player.COMMAND_SEEK_FORWARD)
+        }
+        assertEquals(SessionResult.RESULT_SUCCESS, result)
+    }
+
+    @Test
+    fun mediaSessionBindsToPodcastPlayerByDefault() {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST)
+            binder.addTrack(TrackId.MUSIC)
+        }
+        var sessionPlayer: Player? = null
+        var podcastPlayer: Player? = null
+        instrumentation.runOnMainSync {
+            sessionPlayer = binder.sessionPlayerForTesting()
+            podcastPlayer = binder.getTrack(TrackId.PODCAST)!!.player
+        }
+        assertSame("session should be bound to the podcast player initially", podcastPlayer, sessionPlayer)
+    }
+
+    @Test
+    fun mediaSessionRebindsToMusicPlayerDuringMusicOnlyPlayback() {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).setSource(AudioSource.RssFeed("https://example.com/ep.mp3"))
+            binder.addTrack(TrackId.MUSIC).apply {
+                setSource(AudioSource.YoutubeStream("https://youtube.com/watch?v=abc"))
+                play()
+            }
+        }
+        instrumentation.waitForIdleSync()
+        var sessionPlayer: Player? = null
+        var musicPlayer: Player? = null
+        instrumentation.runOnMainSync {
+            sessionPlayer = binder.sessionPlayerForTesting()
+            musicPlayer = binder.getTrack(TrackId.MUSIC)!!.player
+        }
+        assertSame(
+            "session must mirror the music player when only music plays, or the OS " +
+                "never routes earbud button events to the app",
+            musicPlayer, sessionPlayer
+        )
+    }
+
+    @Test
+    fun mediaSessionRebindsToPodcastPlayerWhenPodcastStartsPlaying() {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).setSource(AudioSource.RssFeed("https://example.com/ep.mp3"))
+            binder.addTrack(TrackId.MUSIC).apply {
+                setSource(AudioSource.YoutubeStream("https://youtube.com/watch?v=abc"))
+                play()
+            }
+        }
+        instrumentation.waitForIdleSync()
+        instrumentation.runOnMainSync { binder.getTrack(TrackId.PODCAST)!!.play() }
+        instrumentation.waitForIdleSync()
+        var sessionPlayer: Player? = null
+        var podcastPlayer: Player? = null
+        instrumentation.runOnMainSync {
+            sessionPlayer = binder.sessionPlayerForTesting()
+            podcastPlayer = binder.getTrack(TrackId.PODCAST)!!.player
+        }
+        assertSame("podcast takes the session back when it starts playing", podcastPlayer, sessionPlayer)
+    }
+
+    @Test
+    fun mediaSessionKeepsMusicPlayerBindingWhileMusicIsPaused() {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).setSource(AudioSource.RssFeed("https://example.com/ep.mp3"))
+            binder.addTrack(TrackId.MUSIC).apply {
+                setSource(AudioSource.YoutubeStream("https://youtube.com/watch?v=abc"))
+                play()
+            }
+        }
+        instrumentation.waitForIdleSync()
+        instrumentation.runOnMainSync { binder.getTrack(TrackId.MUSIC)!!.pause() }
+        instrumentation.waitForIdleSync()
+        var sessionPlayer: Player? = null
+        var musicPlayer: Player? = null
+        instrumentation.runOnMainSync {
+            sessionPlayer = binder.sessionPlayerForTesting()
+            musicPlayer = binder.getTrack(TrackId.MUSIC)!!.player
+        }
+        assertSame(
+            "pausing music should not rebind the session — the paused player keeps " +
+                "the session current so the next button press still reaches the app",
+            musicPlayer, sessionPlayer
+        )
+    }
+
+    @Test
     fun singleMediaButtonPressWithNoSourceLoadedDoesNotCrashOrPlay() {
         instrumentation.runOnMainSync {
             binder.addTrack(TrackId.PODCAST)
@@ -434,5 +588,349 @@ class MultiTrackServiceTest {
         }
         assertFalse("no source loaded — podcast should not start playing", podcastPlaying)
         assertFalse("no source loaded — music should not start playing", musicPlaying)
+    }
+
+    @Test
+    fun playbackStateIsPersistedAfterDebounceWindow() {
+        val db = OsseDatabase.get(ApplicationProvider.getApplicationContext())
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).apply {
+                setSource(AudioSource.RssFeed("https://example.com/ep.mp3"), "Episode 1")
+                seekTo(5_000L)
+            }
+        }
+        Thread.sleep(2_500) // > 2s debounce window
+        val row = runBlocking { db.playbackStateDao().getByTrackId("PODCAST") }
+        assertNotNull("expected a persisted playback_state row for PODCAST", row)
+        assertEquals("RSS_FEED", row!!.sourceType)
+        assertEquals("https://example.com/ep.mp3", row.sourceRef)
+        assertEquals("Episode 1", row.title)
+        assertEquals(5_000L, row.positionMs)
+    }
+
+    @Test
+    fun rssPodcastPositionIsStillWrittenToEpisodesTableAfterDebounce() {
+        val db = OsseDatabase.get(ApplicationProvider.getApplicationContext())
+        runBlocking {
+            db.podcastDao().upsert(
+                PodcastEntity(feedUrl = "https://feed.example.com", title = "Podcast",
+                    artworkUrl = null, description = null)
+            )
+            db.episodeDao().upsertAll(listOf(
+                EpisodeEntity(guid = "ep1", podcastFeedUrl = "https://feed.example.com",
+                    title = "Episode 1", enclosureUrl = "https://example.com/ep1.mp3",
+                    durationMs = 0L, showNotes = null, pubDateMs = 0L)
+            ))
+        }
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).apply {
+                setSource(AudioSource.RssFeed("https://example.com/ep1.mp3"), "Episode 1")
+                seekTo(12_000L)
+            }
+        }
+        Thread.sleep(2_500)
+        val episode = runBlocking { db.episodeDao().getByGuid("ep1") }
+        assertEquals(12_000L, episode!!.positionMs)
+    }
+
+    @Test
+    fun youtubeStreamSourceIsNotPersisted() {
+        val db = OsseDatabase.get(ApplicationProvider.getApplicationContext())
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.MUSIC).apply {
+                setSource(AudioSource.YoutubeStream("https://youtube.com/watch?v=abc"))
+                seekTo(3_000L)
+            }
+        }
+        Thread.sleep(2_500)
+        val row = runBlocking { db.playbackStateDao().getByTrackId("MUSIC") }
+        assertNull("an ephemeral YouTube CDN stream URL must never be persisted", row)
+    }
+
+    // Regression test for the plan-level gap flagged in review: TrackPlayer emits a fresh
+    // positionMs into its state StateFlow every 500ms while actually playing, so the
+    // debounce(2s) collector's upstream never goes quiet during continuous playback and never
+    // fires. This is the exact scenario the resume-after-process-death feature exists for
+    // (process killed mid-listen, not mid-pause), so a persisted row must appear — and its
+    // position must keep advancing — purely from the periodic flush, with the track never
+    // pausing. Uses a real locally-generated silent WAV file (not a fake/unreachable URL like
+    // the other tests here) because this is the one test in the file that needs ExoPlayer's
+    // actual isPlaying flag to go true, not just playWhenReady.
+    @Test
+    fun playbackStateAdvancesFromPeriodicFlushDuringContinuousPlayback() {
+        val db = OsseDatabase.get(ApplicationProvider.getApplicationContext())
+        val wavFile = createSilentWavFile(durationSeconds = 8)
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).apply {
+                setSource(AudioSource.LocalFile(Uri.fromFile(wavFile)))
+                play()
+            }
+        }
+        assertTrue(
+            "expected the local WAV file to actually start playing (ExoPlayer.isPlaying)",
+            waitUntilPlaying(TrackId.PODCAST, timeoutMs = 5_000)
+        )
+
+        // Longer than one periodic-flush tick (2s), with margin, never pausing in between.
+        Thread.sleep(3_200)
+
+        var isPlaying = false
+        instrumentation.runOnMainSync {
+            isPlaying = binder.getTrack(TrackId.PODCAST)!!.state.value.isPlaying
+        }
+        assertTrue(
+            "track must still be playing at assertion time — this test proves persistence " +
+                "happens DURING play, not only after pause/source-change",
+            isPlaying
+        )
+
+        val row = runBlocking { db.playbackStateDao().getByTrackId("PODCAST") }
+        assertNotNull(
+            "the periodic flush should have persisted a playback_state row while the track " +
+                "was continuously playing (the debounce collector alone never fires here, " +
+                "since positionMs never stops changing while playing)",
+            row
+        )
+        assertTrue(
+            "positionMs should have advanced past 0 from the periodic flush, with the track " +
+                "never pausing",
+            row!!.positionMs > 0L
+        )
+    }
+
+    @Test
+    fun restoringPlaybackStateReloadsSourceTitleAndPosition() {
+        val db = OsseDatabase.get(ApplicationProvider.getApplicationContext())
+        runBlocking {
+            db.playbackStateDao().upsert(
+                PlaybackStateEntity(
+                    trackId = "PODCAST", sourceType = "RSS_FEED",
+                    sourceRef = "https://example.com/ep.mp3", title = "Restored Episode",
+                    positionMs = 42_000L, updatedAt = 0L,
+                )
+            )
+        }
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST)
+            binder.restorePlaybackStateForTesting()
+        }
+        val state = binder.getTrack(TrackId.PODCAST)!!.state.value
+        assertEquals(AudioSource.RssFeed("https://example.com/ep.mp3"), state.source)
+        assertEquals("Restored Episode", state.title)
+        assertEquals(42_000L, state.positionMs)
+    }
+
+    @Test
+    fun restoringPodcastTrackAppliesThePodcastsDefaultSpeed() {
+        val db = OsseDatabase.get(ApplicationProvider.getApplicationContext())
+        runBlocking {
+            db.podcastDao().upsert(
+                PodcastEntity(feedUrl = "https://feed.example.com", title = "Podcast",
+                    artworkUrl = null, description = null, defaultSpeed = 1.5f)
+            )
+            db.episodeDao().upsertAll(listOf(
+                EpisodeEntity(guid = "ep1", podcastFeedUrl = "https://feed.example.com",
+                    title = "Episode 1", enclosureUrl = "https://example.com/ep1.mp3",
+                    durationMs = 0L, showNotes = null, pubDateMs = 0L)
+            ))
+            db.playbackStateDao().upsert(
+                PlaybackStateEntity(
+                    trackId = "PODCAST", sourceType = "RSS_FEED",
+                    sourceRef = "https://example.com/ep1.mp3", title = "Episode 1",
+                    positionMs = 0L, updatedAt = 0L,
+                )
+            )
+        }
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST)
+            binder.restorePlaybackStateForTesting()
+        }
+        assertEquals(1.5f, binder.getTrack(TrackId.PODCAST)!!.state.value.speed, 0.001f)
+    }
+
+    // Fix 3 (final review): of the three AudioSource branches restorePlaybackState() handles,
+    // only RSS_FEED and the YOUTUBE cache-miss case previously had restore-side test coverage.
+    // LOCAL_FILE has an external permission dependency and a Uri.parse() round-trip of its own.
+    @Test
+    fun restoringLocalFileTrackReloadsUriAndPosition() {
+        val db = OsseDatabase.get(ApplicationProvider.getApplicationContext())
+        val uriString = "content://media/external/audio/media/1234"
+        runBlocking {
+            db.playbackStateDao().upsert(
+                PlaybackStateEntity(
+                    trackId = "MUSIC", sourceType = "LOCAL_FILE",
+                    sourceRef = uriString, title = "Local Track",
+                    positionMs = 7_000L, updatedAt = 0L,
+                )
+            )
+        }
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.MUSIC)
+            binder.restorePlaybackStateForTesting()
+        }
+        val state = binder.getTrack(TrackId.MUSIC)!!.state.value
+        assertEquals(AudioSource.LocalFile(Uri.parse(uriString)), state.source)
+        assertEquals("Local Track", state.title)
+        assertEquals(7_000L, state.positionMs)
+    }
+
+    // Fix 2 (final review): restorePlaybackState() must not trigger ExoPlayer's immediate
+    // network buffering on a bare service (re)creation the user never asked for — e.g. an
+    // unattended OS restart after a low-memory kill. TrackPlayer.setSource(prepare = false)
+    // is used for the restore call site only; the player must stay STATE_IDLE until play()
+    // is actually invoked.
+    @Test
+    fun restoringPlaybackStateDoesNotEagerlyPrepareThePlayer() {
+        val db = OsseDatabase.get(ApplicationProvider.getApplicationContext())
+        runBlocking {
+            db.playbackStateDao().upsert(
+                PlaybackStateEntity(
+                    trackId = "PODCAST", sourceType = "RSS_FEED",
+                    sourceRef = "https://example.com/ep.mp3", title = "Restored Episode",
+                    positionMs = 42_000L, updatedAt = 0L,
+                )
+            )
+        }
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST)
+            binder.restorePlaybackStateForTesting()
+        }
+        var playbackState = Player.STATE_READY
+        instrumentation.runOnMainSync {
+            playbackState = binder.getTrack(TrackId.PODCAST)!!.player.playbackState
+        }
+        assertEquals(
+            "restoring a track must not start network buffering — the player should stay " +
+                "STATE_IDLE until play() is actually called",
+            Player.STATE_IDLE, playbackState
+        )
+    }
+
+    @Test
+    fun coldStartRestoreThenMediaButtonPressResumesBothTracks() {
+        val db = OsseDatabase.get(ApplicationProvider.getApplicationContext())
+        runBlocking {
+            db.playbackStateDao().upsert(
+                PlaybackStateEntity(
+                    trackId = "PODCAST", sourceType = "RSS_FEED",
+                    sourceRef = "https://example.com/ep.mp3", title = null,
+                    positionMs = 10_000L, updatedAt = 0L,
+                )
+            )
+            db.playbackStateDao().upsert(
+                PlaybackStateEntity(
+                    trackId = "MUSIC", sourceType = "RSS_FEED",
+                    sourceRef = "https://example.com/music.mp3", title = null,
+                    positionMs = 0L, updatedAt = 0L,
+                )
+            )
+        }
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST)
+            binder.addTrack(TrackId.MUSIC)
+            binder.restorePlaybackStateForTesting()
+            binder.simulateMediaButtonPress()
+        }
+        // Poll rather than a fixed Thread.sleep(400): the single-press handler only fires
+        // after DOUBLE_PRESS_WINDOW_MS (300ms), so a fixed 400ms sleep leaves only a ~100ms
+        // margin and can flake under load.
+        assertTrue(
+            "restored podcast track should resume on media-button press",
+            waitUntilPlayWhenReady(TrackId.PODCAST, timeoutMs = 2_000)
+        )
+        assertTrue(
+            "restored music track should resume on media-button press",
+            waitUntilPlayWhenReady(TrackId.MUSIC, timeoutMs = 2_000)
+        )
+    }
+
+    @Test
+    fun restoringYoutubeTrackNotInCacheLeavesItSourcelessAndClearsStaleRow() {
+        val db = OsseDatabase.get(ApplicationProvider.getApplicationContext())
+        runBlocking {
+            db.playbackStateDao().upsert(
+                PlaybackStateEntity(
+                    trackId = "MUSIC", sourceType = "YOUTUBE",
+                    sourceRef = "missingVideoId", title = "Gone", positionMs = 0L, updatedAt = 0L,
+                )
+            )
+        }
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.MUSIC)
+            binder.restorePlaybackStateForTesting()
+        }
+        assertNull(binder.getTrack(TrackId.MUSIC)!!.state.value.source)
+        val row = runBlocking { db.playbackStateDao().getByTrackId("MUSIC") }
+        assertNull("stale playback_state row must be cleared when the cache entry is gone", row)
+    }
+
+    private fun waitUntilPlaying(id: TrackId, timeoutMs: Long): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            var playing = false
+            instrumentation.runOnMainSync {
+                playing = binder.getTrack(id)?.state?.value?.isPlaying == true
+            }
+            if (playing) return true
+            Thread.sleep(100)
+        }
+        return false
+    }
+
+    private fun waitUntilPlayWhenReady(id: TrackId, timeoutMs: Long): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            var ready = false
+            instrumentation.runOnMainSync {
+                ready = binder.getTrack(id)?.player?.playWhenReady == true
+            }
+            if (ready) return true
+            Thread.sleep(100)
+        }
+        return false
+    }
+
+    private fun createSilentWavFile(durationSeconds: Int): File {
+        val sampleRate = 8000
+        val dataSize = sampleRate * durationSeconds // 8-bit mono: 1 byte/sample
+        val file = File.createTempFile(
+            "silence",
+            ".wav",
+            ApplicationProvider.getApplicationContext<Context>().cacheDir
+        )
+        FileOutputStream(file).use { out ->
+            fun writeInt(v: Int) = out.write(
+                byteArrayOf(
+                    (v and 0xff).toByte(),
+                    ((v shr 8) and 0xff).toByte(),
+                    ((v shr 16) and 0xff).toByte(),
+                    ((v shr 24) and 0xff).toByte(),
+                )
+            )
+            fun writeShort(v: Int) = out.write(byteArrayOf((v and 0xff).toByte(), ((v shr 8) and 0xff).toByte()))
+
+            out.write("RIFF".toByteArray())
+            writeInt(36 + dataSize)
+            out.write("WAVE".toByteArray())
+            out.write("fmt ".toByteArray())
+            writeInt(16) // fmt chunk size
+            writeShort(1) // PCM
+            writeShort(1) // mono
+            writeInt(sampleRate)
+            writeInt(sampleRate) // byte rate (sampleRate * channels * bitsPerSample/8)
+            writeShort(1) // block align
+            writeShort(8) // bits per sample
+            out.write("data".toByteArray())
+            writeInt(dataSize)
+
+            val silence = ByteArray(4096) { 0x80.toByte() } // midpoint = silence for 8-bit unsigned PCM
+            var remaining = dataSize
+            while (remaining > 0) {
+                val n = minOf(silence.size, remaining)
+                out.write(silence, 0, n)
+                remaining -= n
+            }
+        }
+        return file
     }
 }

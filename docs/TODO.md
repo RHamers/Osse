@@ -25,12 +25,14 @@ done 2026-07-07.
       keep rule is what's preventing it, not an R8 default. `VideoSearchResult` had no
       `@SerializedName` annotations at all, so it was fully exposed to this bug before the fix.
 
-- [ ] **Sign release builds with a real keystore.** Release APKs are currently unsigned
-      (`app/build.gradle.kts` has no `signingConfig` for the `release` build type). Generate a
-      keystore, add a `signingConfig` reading path/passwords from `local.properties` (local)
-      and CI secrets (`.github/workflows/build.yml`), and wire it into the release build type
-      so the Release workflow publishes a signed, installable APK instead of
-      `app-release-unsigned.apk`.
+- [x] **Sign release builds with a real keystore.** Added a `release` `signingConfig` to
+      `app/build.gradle.kts` reading `keystore.path`/`password`/`alias`/`keyPassword` from
+      `local.properties` locally, falling back to `KEYSTORE_PATH`/`KEYSTORE_PASSWORD`/
+      `KEYSTORE_ALIAS`/`KEYSTORE_KEY_PASSWORD` env vars in CI. `.github/workflows/build.yml`
+      decodes the `RELEASE_KEYSTORE_B64` secret to a `.jks` file and passes
+      `RELEASE_KEYSTORE_PASSWORD` through; release workflow now uploads `app-release.apk`
+      instead of `app-release-unsigned.apk`. Both secrets confirmed present on the repo via
+      `gh secret list`. (Uncommitted as of this writing — see working tree.)
 
 - [x] **Remove `resume.txt` from git tracking.** It had already been removed from tracking
       in commit `f654a9d`. Added `resume.txt` to `.git/info/exclude` (local-only, not
@@ -41,29 +43,58 @@ done 2026-07-07.
 
 ## Medium priority
 
-- [ ] **Add unit tests for `DefaultYoutubeCacheManager`** — cache-hit/miss branching,
-      background download, thumbnail fetch (132 lines, currently only exercised indirectly
-      through fakes at the ViewModel layer).
+- [x] **Add unit tests for `DefaultYoutubeCacheManager`.** Already covered by
+      `YoutubeCacheManagerTest` (14 tests: cache-hit/miss branching for both
+      `resolveSource`/`downloadAndCache`, background-download success/failure via a fake
+      `YoutubeExtractor`, `onCached` invocation, delete, search delegation) — this must have
+      been added after the 2026-07-07 audit; the checkbox was just stale.
 
-- [ ] **Add unit tests for `DefaultPodcastRepository`** — including the recently added
-      `refreshAllPodcasts()`; currently only exercised indirectly through
-      `FakePodcastRepository`.
+- [x] **Add unit tests for `DefaultPodcastRepository`.** Added
+      `DefaultPodcastRepositoryTest` (21 tests) using an in-memory Room DB plus a
+      `MockWebServer` for RSS fetches (`okhttp-mockwebserver`, new test dependency) and a
+      hand-rolled `PodcastIndexApi` fake for search. Covers subscribe/subscribeByUrl,
+      refreshEpisodes' auto-queue-only-new-episodes logic and metadata-preservation on
+      refresh, `refreshAllPodcasts()` tolerating one feed failing without blocking the
+      rest, unsubscribe cascade, queue management, and the simple DAO passthroughs.
+      Required adding a `PodcastIndexApi`/`OkHttpClient` constructor seam (both
+      default-valued, so the one production call site in `MainActivity` is unaffected) since
+      `searchPodcasts` previously called the `PodcastIndexClient.api` singleton directly.
 
-- [ ] **Clean up accumulating deprecation warnings:**
-  - `ClickableText` in `EpisodeDetailScreen.kt:126`
-  - `Icons.Filled.VolumeDown` / `VolumeUp` in `TrackScreen.kt:484,491`
-  - `createComposeRule` (deprecated v1 API) in 5 `androidTest` files, e.g.
-    `EpisodeListScreenTest.kt:30`
-  - Missing `@OptIn(ExperimentalCoroutinesApi)` on `UnconfinedTestDispatcher` usage in
-    `PodcastViewModelQueueTest.kt:35` and `PodcastViewModelTest.kt:109`
+- [x] **Clean up accumulating deprecation warnings** (partial — see note below):
+  - [x] `ClickableText` in `EpisodeDetailScreen.kt` → `Text` + `AnnotatedString` with
+        `LinkAnnotation.Url`/`TextLinkStyles` instead of a manual offset→`getStringAnnotations`
+        click handler. Verified via `EpisodeDetailScreenTest` (8/8 pass).
+  - [x] `Icons.Filled.VolumeDown` / `VolumeUp` in `TrackScreen.kt` → `Icons.AutoMirrored.Filled.*`.
+        Verified via `TrackCardTest`/`TrackScreenTest` (70 tests total, all pass).
+  - [x] Missing `@OptIn(ExperimentalCoroutinesApi)` on `UnconfinedTestDispatcher` usage in
+        `PodcastViewModelQueueTest.kt` and `PodcastViewModelTest.kt` — added class-level
+        `@OptIn`.
+  - [x] **`createComposeRule` migrated to v2** (`androidx.compose.ui.test.junit4.v2.createComposeRule`)
+        in all 6 remaining `androidTest` files (`EpisodeDetailScreenTest`,
+        `EpisodeListScreenTest`, `PodcastSearchScreenTest`, `ReleaseQrScreenTest`,
+        `UpNextScreenTest`, `YoutubeLibraryScreenTest`). Lower-risk than first assessed:
+        none used `runOnIdle` (the pattern that hangs under v2's `StandardTestDispatcher`),
+        and the async ones already used the safe `waitUntil(timeoutMillis) { }` pattern —
+        the same one already proven in `TrackScreenTest`/`TrackCardTest`, which were on v2
+        already. Verified with the full instrumented suite (155 tests) on both the Pixel_9
+        emulator and a real SM-G525F device — all pass. No more deprecation warnings from
+        this item anywhere in the codebase.
 
-- [ ] **Extract shared playback-defaults helper.** `MainActivity.playEpisode()`
-      (`:254-263`) and `playEpisodeFromQueue()` (`:286-303`) both independently look up the
-      podcast's `defaultSpeed` and seek to a saved `positionMs`. Consolidate into one helper.
+- [x] **Extract shared playback-defaults helper.** Added
+      `applyPlaybackDefaults(track, podcastFeedUrl, positionMs)` in `MainActivity.kt`,
+      looking up the podcast's `defaultSpeed` and seeking to `positionMs` in one place.
+      `playEpisode()` calls it synchronously (it already has the full `Episode`);
+      `playEpisodeFromQueue()` calls it from inside its existing `lifecycleScope.launch`
+      once the episode entity is fetched — the sync-vs-async shape of each caller is
+      unchanged, only the duplicated lookup/setSpeed/seekTo logic was consolidated.
+      Pure refactor, no behavior change; verified via `compileDebugKotlin`. Note:
+      `MainActivity` has no instrumented tests today (nothing to regress against, and
+      standing up an Activity test harness was out of scope for this dedup).
 
-- [ ] **Bump `versionCode`/`versionName` periodically.** Frozen at `1` / `0.1.0` since project
-      start. The Release workflow tags off `versionName` (`v<versionName>-<run_number>`), so
-      it's worth bumping on meaningful milestones rather than never.
+- [x] **Bump `versionCode`/`versionName` periodically.** Bumped `1`/`0.1.0` → `2`/`0.2.0`
+      in `app/build.gradle.kts` — this milestone bundles signed release builds, the QR
+      release-share screen, the CDN-pause/media-button fixes, and the new
+      `DefaultYoutubeCacheManager`/`DefaultPodcastRepository` test coverage.
 
 ---
 

@@ -207,7 +207,29 @@ class TrackScreenTest {
         composeRule.waitUntil(timeoutMillis = 5_000) {
             composeRule.onAllNodes(hasText("Search or paste URL")).fetchSemanticsNodes().isEmpty()
         }
-        composeRule.onNodeWithText("YouTube stream").assertIsDisplayed()
+        // A pasted URL has no real title, so the video id is used as a placeholder —
+        // still more useful than the generic "YouTube stream" fallback.
+        composeRule.onNodeWithText("abc").assertIsDisplayed()
+    }
+
+    @Test
+    fun youtubePlayStartsPlaybackWithoutASecondPress() {
+        val fakeManager = FakeYoutubeCacheManager(resolveResult = Result.success(AudioSource.YoutubeStream("https://fake-stream.example.com/audio")))
+        composeRule.setContent { OsseTheme { TrackScreen(binder = binder, cacheManager = fakeManager) } }
+        openYoutubeDialog()
+        typeIntoYoutubeField("https://youtube.com/watch?v=abc")
+        composeRule.onNodeWithText("Play").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodes(hasText("Search or paste URL")).fetchSemanticsNodes().isEmpty()
+        }
+        var playWhenReady = false
+        instrumentation.runOnMainSync {
+            playWhenReady = binder.getTrack(TrackId.PODCAST)!!.player.playWhenReady
+        }
+        assertTrue(
+            "the dialog's Play button must start playback, not just load the source",
+            playWhenReady,
+        )
     }
 
     @Test
@@ -234,7 +256,9 @@ class TrackScreenTest {
         composeRule.waitUntil(timeoutMillis = 5_000) {
             composeRule.onAllNodes(hasText("Search or paste URL")).fetchSemanticsNodes().isEmpty()
         }
-        composeRule.onNodeWithText("abc.webm").assertIsDisplayed()
+        // A pasted URL has no real title, so the video id is used as a placeholder,
+        // taking priority over the downloaded file's name.
+        composeRule.onNodeWithText("abc").assertIsDisplayed()
     }
 
     @Test
@@ -289,7 +313,8 @@ class TrackScreenTest {
         composeRule.waitUntil(timeoutMillis = 5_000) {
             composeRule.onAllNodes(hasText("Search or paste URL")).fetchSemanticsNodes().isEmpty()
         }
-        composeRule.onNodeWithText("YouTube stream").assertIsDisplayed()
+        // A search result's real title must carry through to the loaded track.
+        composeRule.onNodeWithText("Lofi Beats").assertIsDisplayed()
     }
 
     @Test
@@ -311,7 +336,8 @@ class TrackScreenTest {
         composeRule.waitUntil(timeoutMillis = 5_000) {
             composeRule.onAllNodes(hasText("Search or paste URL")).fetchSemanticsNodes().isEmpty()
         }
-        composeRule.onNodeWithText("vid1.webm").assertIsDisplayed()
+        // A search result's real title must carry through to the loaded track.
+        composeRule.onNodeWithText("Lofi Beats").assertIsDisplayed()
     }
 
     @Test

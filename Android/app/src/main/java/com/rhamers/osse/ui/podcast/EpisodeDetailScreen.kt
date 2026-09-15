@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -34,9 +33,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -122,17 +122,12 @@ fun EpisodeDetailScreen(
                 val annotated = remember(episode.showNotes, linkColor) {
                     htmlToAnnotatedString(episode.showNotes, linkColor)
                 }
-                val uriHandler = LocalUriHandler.current
-                ClickableText(
+                Text(
                     text = annotated,
                     style = MaterialTheme.typography.bodyMedium.copy(
                         color = MaterialTheme.colorScheme.onSurface
                     ),
-                    modifier = Modifier.padding(vertical = 12.dp),
-                    onClick = { offset ->
-                        annotated.getStringAnnotations("URL", offset, offset)
-                            .firstOrNull()?.let { uriHandler.openUri(it.item) }
-                    }
+                    modifier = Modifier.padding(vertical = 12.dp)
                 )
             }
         }
@@ -157,13 +152,13 @@ private fun htmlToAnnotatedString(html: String, linkColor: Color): AnnotatedStri
                 is UnderlineSpan -> addStyle(SpanStyle(textDecoration = TextDecoration.Underline), start, end)
                 is ForegroundColorSpan -> addStyle(SpanStyle(color = Color(span.foregroundColor)), start, end)
                 is RelativeSizeSpan -> addStyle(SpanStyle(fontSize = (16 * span.sizeChange).sp), start, end)
-                is URLSpan -> {
-                    addStringAnnotation("URL", span.url, start, end)
-                    addStyle(
-                        SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline),
-                        start, end
-                    )
-                }
+                is URLSpan -> addLink(
+                    LinkAnnotation.Url(
+                        span.url,
+                        TextLinkStyles(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline))
+                    ),
+                    start, end
+                )
             }
         }
     }

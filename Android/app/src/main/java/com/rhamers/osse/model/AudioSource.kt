@@ -27,3 +27,19 @@ fun AudioSource.toMediaItem(): MediaItem {
     }
     return MediaItem.fromUri(uri)
 }
+
+object PlaybackSourceType {
+    const val RSS_FEED = "RSS_FEED"
+    const val LOCAL_FILE = "LOCAL_FILE"
+    const val YOUTUBE = "YOUTUBE"
+}
+
+// Maps a source to the (sourceType, sourceRef) pair persisted in `playback_state` for
+// process-death resume. Returns null for YoutubeStream: its CDN URL expires, so nothing
+// is written until the background download finishes and the source becomes YoutubeDownloaded.
+fun AudioSource.toPlaybackRef(): Pair<String, String>? = when (this) {
+    is AudioSource.RssFeed           -> PlaybackSourceType.RSS_FEED to enclosureUrl
+    is AudioSource.LocalFile         -> PlaybackSourceType.LOCAL_FILE to uri.toString()
+    is AudioSource.YoutubeDownloaded -> PlaybackSourceType.YOUTUBE to File(localPath).nameWithoutExtension
+    is AudioSource.YoutubeStream     -> null
+}

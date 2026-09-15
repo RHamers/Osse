@@ -105,6 +105,25 @@ class TrackPlayerTest {
     }
 
     @Test
+    fun setSourceSwitchesToYoutubeUserAgentForYoutubeStream() {
+        val ytPlayer = TrackPlayer(
+            ApplicationProvider.getApplicationContext(),
+            TrackId.MUSIC,
+            youtubePlaybackUserAgent = { "fake-android-vr-ua" },
+        )
+        ytPlayer.setSource(AudioSource.YoutubeStream("https://stream.example.com/audio"))
+        assertEquals("fake-android-vr-ua", ytPlayer.activeUserAgent)
+        ytPlayer.release()
+    }
+
+    @Test
+    fun setSourceKeepsGenericUserAgentForNonYoutubeSources() {
+        val before = player.activeUserAgent
+        player.setSource(AudioSource.RssFeed("https://example.com/episode.mp3"))
+        assertEquals("a non-YouTube source must not touch the UA", before, player.activeUserAgent)
+    }
+
+    @Test
     fun seekToUpdatesPositionInState() {
         player.seekTo(30_000L)
         assertEquals(30_000L, player.state.value.positionMs)
@@ -190,6 +209,54 @@ class TrackPlayerTest {
         shadowOf(Looper.getMainLooper()).idle()
 
         assertFalse(retryingPlayer.player.playWhenReady)
+        retryingPlayer.release()
+    }
+
+    @Test
+    fun playDuringRetryWindowIsNotRevertedByPendingRetry() {
+        val retryingPlayer = TrackPlayer(
+            ApplicationProvider.getApplicationContext(),
+            TrackId.MUSIC,
+            retryDelaysMs = longArrayOf(0L),
+        )
+        retryingPlayer.setSource(AudioSource.RssFeed("https://example.com/episode.mp3"))
+        // Error while paused (e.g. stream 403 right after setSource, before the user
+        // pressed play) — a retry is now pending with playWhenReady=false semantics.
+        val error = PlaybackException("network error", null, PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED)
+        retryingPlayer.handlePlayerError(error)
+
+        // The user presses play inside the backoff window.
+        retryingPlayer.play()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertTrue(
+            "a play press during the retry backoff window must stick, not be reverted",
+            retryingPlayer.player.playWhenReady,
+        )
+        assertFalse("the manual play replaces the scheduled retry", retryingPlayer.hasPendingRetry)
+        retryingPlayer.release()
+    }
+
+    @Test
+    fun setSourceCancelsPendingRetryAndResetsRetryBudget() {
+        val retryingPlayer = TrackPlayer(
+            ApplicationProvider.getApplicationContext(),
+            TrackId.MUSIC,
+            retryDelaysMs = longArrayOf(60_000L),
+        )
+        retryingPlayer.setSource(AudioSource.RssFeed("https://example.com/old.mp3"))
+        val error = PlaybackException("network error", null, PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED)
+        retryingPlayer.handlePlayerError(error)
+        assertTrue(retryingPlayer.hasPendingRetry)
+        assertEquals(1, retryingPlayer.currentRetryAttempt)
+
+        retryingPlayer.setSource(AudioSource.RssFeed("https://example.com/new.mp3"))
+
+        assertFalse(
+            "a retry scheduled for the old source must not fire against the new one",
+            retryingPlayer.hasPendingRetry,
+        )
+        assertEquals(0, retryingPlayer.currentRetryAttempt)
         retryingPlayer.release()
     }
 
