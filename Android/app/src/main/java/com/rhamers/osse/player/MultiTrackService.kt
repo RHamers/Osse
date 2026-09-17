@@ -27,6 +27,7 @@ import com.rhamers.osse.model.PlaybackSourceType
 import com.rhamers.osse.model.TrackId
 import com.rhamers.osse.model.toPlaybackRef
 import com.rhamers.osse.player.DefaultYoutubeCacheManager
+import com.rhamers.osse.youtube.WebViewPoTokenProvider
 import com.rhamers.osse.youtube.YoutubeAudio
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -52,6 +53,7 @@ class MultiTrackService : MediaSessionService() {
     private val _activeTrackIds = MutableStateFlow<List<TrackId>>(emptyList())
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private lateinit var cacheManager: YoutubeCacheManager
+    private lateinit var poTokenProvider: WebViewPoTokenProvider
 
     private val audioManager: AudioManager by lazy {
         getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -363,11 +365,28 @@ class MultiTrackService : MediaSessionService() {
             IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY),
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
+        poTokenProvider = WebViewPoTokenProvider(this)
         cacheManager = DefaultYoutubeCacheManager(
             extractor = YoutubeAudio,
+            poTokenProvider = poTokenProvider,
             cacheDir = (getExternalFilesDir("youtube") ?: filesDir).also { it.mkdirs() },
             db = OsseDatabase.get(this),
             scope = serviceScope,
+            downloadAudioFile = { url, destPath ->
+                withContext(Dispatchers.IO) {
+                    val connection = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                    connection.setRequestProperty("User-Agent", YoutubeAudio.playbackUserAgent())
+                    connection.connect()
+                    if (connection.responseCode !in 200..299) {
+                        throw java.io.IOException("HTTP ${connection.responseCode} downloading $url")
+                    }
+                    val dest = java.io.File(destPath)
+                    dest.parentFile?.mkdirs()
+                    connection.inputStream.use { input ->
+                        dest.outputStream().use { output -> input.copyTo(output) }
+                    }
+                }
+            },
             onCached = { streamUrl, localPath ->
                 // Background download finished: swap any track still streaming from the
                 // now-expiring CDN URL to the permanent local file, preserving position.
@@ -565,6 +584,7 @@ class MultiTrackService : MediaSessionService() {
         mediaSession = null
         tracks.values.forEach { it.release() }
         tracks.clear()
+        poTokenProvider.destroy()
         super.onDestroy()
     }
 
