@@ -89,9 +89,6 @@ class YoutubeCacheManagerTest {
     fun `resolveSource appends pot with ampersand when url already has a query string`() = testScope.runTest {
         val extractor = object : YoutubeExtractor {
             override suspend fun extractAudioUrl(videoUrl: String) = "https://fake-stream.example.com/audio?itag=251"
-            // TODO(task-3): YoutubeExtractor.downloadAudio is still abstract on the interface
-            // until Task 3 removes it; drop this no-op override when that lands.
-            override suspend fun downloadAudio(videoUrl: String, outputPath: String) {}
             override suspend fun searchVideos(query: String, maxResults: Int) = emptyList<VideoSearchResult>()
             override fun playbackUserAgent() = "fake-ua"
         }
@@ -238,9 +235,6 @@ class YoutubeCacheManagerTest {
 
     private fun successExtractor() = object : YoutubeExtractor {
         override suspend fun extractAudioUrl(videoUrl: String) = "https://fake-stream.example.com/audio"
-        // TODO(task-3): YoutubeExtractor.downloadAudio is still abstract on the interface
-        // until Task 3 removes it; drop this no-op override when that lands.
-        override suspend fun downloadAudio(videoUrl: String, outputPath: String) {}
         override suspend fun searchVideos(query: String, maxResults: Int) =
             listOf(VideoSearchResult("vid1", "Lofi Beats", "Lofi Girl", 225L))
         override fun playbackUserAgent() = "fake-ua"

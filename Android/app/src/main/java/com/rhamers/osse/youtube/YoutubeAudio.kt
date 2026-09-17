@@ -13,10 +13,6 @@ object YoutubeAudio : YoutubeExtractor {
         Ytaudio.extractAudioURL(videoUrl)
     }
 
-    override suspend fun downloadAudio(videoUrl: String, outputPath: String) = withContext(Dispatchers.IO) {
-        Ytaudio.downloadAudio(videoUrl, outputPath)
-    }
-
     override suspend fun searchVideos(query: String, maxResults: Int): List<VideoSearchResult> = withContext(Dispatchers.IO) {
         val json = Ytaudio.searchVideosJSON(query, maxResults.toLong())
         gson.fromJson(json, Array<VideoSearchResult>::class.java).toList()
