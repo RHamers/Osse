@@ -5,7 +5,9 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
+import android.webkit.WebViewClient
 import kotlinx.coroutines.CancellableContinuation
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
@@ -34,6 +36,7 @@ class WebViewPoTokenProvider(context: Context) : PoTokenProvider {
     private val contentBinding = UUID.randomUUID().toString()
 
     private var webView: WebView? = null
+    private var pageLoadDeferred: CompletableDeferred<Unit>? = null
     private val mutex = Mutex()
     private var cachedToken: String? = null
     private var cachedTokenExpiresAtMs: Long = 0L
@@ -59,9 +62,10 @@ class WebViewPoTokenProvider(context: Context) : PoTokenProvider {
     }
 
     private suspend fun mintToken(): Pair<String, Long> = withContext(Dispatchers.Main) {
+        val view = webView ?: createWebView().also { webView = it }
+        pageLoadDeferred?.await()
         suspendCancellableCoroutine { continuation ->
             pendingContinuation.set(continuation)
-            val view = webView ?: createWebView().also { webView = it }
             view.evaluateJavascript("window.mintToken(${jsStringLiteral(contentBinding)});", null)
         }
     }
@@ -73,6 +77,13 @@ class WebViewPoTokenProvider(context: Context) : PoTokenProvider {
         view.settings.javaScriptEnabled = true
         view.settings.allowUniversalAccessFromFileURLs = true
         view.addJavascriptInterface(Bridge(), "AndroidBridge")
+        val deferred = CompletableDeferred<Unit>()
+        pageLoadDeferred = deferred
+        view.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView?, url: String?) {
+                deferred.complete(Unit)
+            }
+        }
         view.loadUrl("file:///android_asset/potoken/index.html")
         return view
     }
