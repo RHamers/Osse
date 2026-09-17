@@ -1,0 +1,74 @@
+<!-- Android/app/src/main/assets/potoken/index.html -->
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body>
+<script type="module">
+  import { getChallenge, BotGuardClient } from './exports/botguard.js';
+  import { WebPoMinter } from './exports/webpo.js';
+
+  // A stable, widely-used public web request key for the BotGuard "Create" challenge
+  // call — not a secret, not tied to any Google account, the same one bgutils-js's own
+  // examples use.
+  const REQUEST_KEY = 'O43z0dpjhgX20SCx4KAo';
+
+  async function mintToken(contentBinding) {
+    const challengeResponse = await getChallenge({
+      requestKey: REQUEST_KEY,
+      fetchFunction: fetch,
+      useYouTubeAPI: false,
+    });
+    if (!challengeResponse.program) {
+      throw new Error('no BotGuard challenge program returned');
+    }
+
+    const interpreterUrl = challengeResponse.interpreterUrl
+      ?.privateDoNotAccessOrElseTrustedResourceUrlWrappedValue;
+    const interpreterJavascript = interpreterUrl
+      ? await (await fetch(`https:${interpreterUrl}`)).text()
+      : challengeResponse.interpreterJavascript
+          ?.privateDoNotAccessOrElseSafeScriptWrappedValue;
+    if (!interpreterJavascript) {
+      throw new Error('no BotGuard interpreter javascript available');
+    }
+    new Function(interpreterJavascript)();
+
+    const botGuardClient = await BotGuardClient.create({
+      program: challengeResponse.program,
+      globalName: challengeResponse.globalName,
+      globalObject: globalThis,
+    });
+    const webPoSignalOutput = [];
+    const botguardResponse = await botGuardClient.snapshot({ webPoSignalOutput });
+
+    const integrityTokenResponse = await fetch(
+      'https://jnn-pa.googleapis.com/$rpc/google.internal.waa.v1.Waa/GenerateIT',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json+protobuf' },
+        body: JSON.stringify([REQUEST_KEY, botguardResponse]),
+      },
+    );
+    const integrityTokenJson = await integrityTokenResponse.json();
+    const [integrityToken, estimatedTtlSecs, mintRefreshThreshold, websafeFallbackToken] = integrityTokenJson;
+
+    const webPoMinter = await WebPoMinter.create(
+      { integrityToken, estimatedTtlSecs, mintRefreshThreshold, websafeFallbackToken },
+      webPoSignalOutput,
+    );
+    const poToken = await webPoMinter.mintAsWebsafeString(contentBinding);
+    return { poToken, estimatedTtlSecs };
+  }
+
+  window.mintToken = function (contentBinding) {
+    mintToken(contentBinding)
+      .then(({ poToken, estimatedTtlSecs }) => {
+        window.AndroidBridge.onToken(poToken, String(estimatedTtlSecs));
+      })
+      .catch((e) => {
+        window.AndroidBridge.onError(String(e && e.message ? e.message : e));
+      });
+  };
+</script>
+</body>
+</html>
