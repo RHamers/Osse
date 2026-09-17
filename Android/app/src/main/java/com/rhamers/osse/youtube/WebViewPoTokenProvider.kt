@@ -13,6 +13,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -36,7 +37,7 @@ class WebViewPoTokenProvider(context: Context) : PoTokenProvider {
     private val mutex = Mutex()
     private var cachedToken: String? = null
     private var cachedTokenExpiresAtMs: Long = 0L
-    private var pendingContinuation: CancellableContinuation<Pair<String, Long>>? = null
+    private val pendingContinuation = AtomicReference<CancellableContinuation<Pair<String, Long>>?>(null)
 
     override suspend fun getToken(): String = mutex.withLock {
         val now = System.currentTimeMillis()
@@ -48,13 +49,18 @@ class WebViewPoTokenProvider(context: Context) : PoTokenProvider {
     }
 
     fun destroy() {
+        pendingContinuation.getAndSet(null)?.let { continuation ->
+            if (continuation.isActive) {
+                continuation.resumeWithException(IOException("PoTokenProvider destroyed while minting"))
+            }
+        }
         webView?.destroy()
         webView = null
     }
 
     private suspend fun mintToken(): Pair<String, Long> = withContext(Dispatchers.Main) {
         suspendCancellableCoroutine { continuation ->
-            pendingContinuation = continuation
+            pendingContinuation.set(continuation)
             val view = webView ?: createWebView().also { webView = it }
             view.evaluateJavascript("window.mintToken(${jsStringLiteral(contentBinding)});", null)
         }
@@ -77,16 +83,14 @@ class WebViewPoTokenProvider(context: Context) : PoTokenProvider {
     private inner class Bridge {
         @JavascriptInterface
         fun onToken(token: String, ttlSecsStr: String) {
-            val continuation = pendingContinuation ?: return
-            pendingContinuation = null
+            val continuation = pendingContinuation.getAndSet(null) ?: return
             val ttlSecs = ttlSecsStr.toLongOrNull() ?: 0L
             if (continuation.isActive) continuation.resume(token to ttlSecs)
         }
 
         @JavascriptInterface
         fun onError(message: String) {
-            val continuation = pendingContinuation ?: return
-            pendingContinuation = null
+            val continuation = pendingContinuation.getAndSet(null) ?: return
             if (continuation.isActive) {
                 continuation.resumeWithException(IOException("PoToken generation failed: $message"))
             }
