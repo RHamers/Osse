@@ -14,7 +14,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.IOException
-import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -31,24 +30,17 @@ class WebViewPoTokenProvider(context: Context) : PoTokenProvider {
 
     private val appContext = context.applicationContext
 
-    // Bound to a stable per-instance random string rather than any specific video —
-    // one minted token is reused for every video this process plays or downloads.
-    private val contentBinding = UUID.randomUUID().toString()
-
     private var webView: WebView? = null
     private var pageLoadDeferred: CompletableDeferred<Unit>? = null
     private val mutex = Mutex()
-    private var cachedToken: String? = null
-    private var cachedTokenExpiresAtMs: Long = 0L
     private val pendingContinuation = AtomicReference<CancellableContinuation<Pair<String, Long>>?>(null)
 
-    override suspend fun getToken(): String = mutex.withLock {
-        val now = System.currentTimeMillis()
-        cachedToken?.let { token -> if (now < cachedTokenExpiresAtMs) return token }
-        val (token, ttlSecs) = mintToken()
-        cachedToken = token
-        cachedTokenExpiresAtMs = now + ttlSecs * 1000L
-        token
+    // The token must be bound to the video it will play, so every call mints fresh — but
+    // the expensive BotGuard challenge/integrity-token setup behind it is cached on the
+    // JS side (see index.html's ensureMinter()) and reused across videos until its TTL
+    // expires, so this is cheap after the first call in a while.
+    override suspend fun getToken(videoId: String): String = mutex.withLock {
+        mintToken(videoId).first
     }
 
     fun destroy() {
@@ -61,12 +53,12 @@ class WebViewPoTokenProvider(context: Context) : PoTokenProvider {
         webView = null
     }
 
-    private suspend fun mintToken(): Pair<String, Long> = withContext(Dispatchers.Main) {
+    private suspend fun mintToken(videoId: String): Pair<String, Long> = withContext(Dispatchers.Main) {
         val view = webView ?: createWebView().also { webView = it }
         pageLoadDeferred?.await()
         suspendCancellableCoroutine { continuation ->
             pendingContinuation.set(continuation)
-            view.evaluateJavascript("window.mintToken(${jsStringLiteral(contentBinding)});", null)
+            view.evaluateJavascript("window.mintToken(${jsStringLiteral(videoId)});", null)
         }
     }
 

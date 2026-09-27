@@ -5,9 +5,12 @@ class FakePoTokenProvider(
 ) : PoTokenProvider {
     var callCount = 0
         private set
+    var lastVideoId: String? = null
+        private set
 
-    override suspend fun getToken(): String {
+    override suspend fun getToken(videoId: String): String {
         callCount++
+        lastVideoId = videoId
         return tokenResult.getOrThrow()
     }
 }

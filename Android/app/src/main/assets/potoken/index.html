@@ -6,13 +6,25 @@
 <script type="module">
   import { getChallenge, BotGuardClient } from './exports/botguard.js';
   import { WebPoMinter } from './exports/webpo.js';
+  import { buildURL, getHeaders } from './exports/utils.js';
 
   // A stable, widely-used public web request key for the BotGuard "Create" challenge
   // call — not a secret, not tied to any Google account, the same one bgutils-js's own
   // examples use.
   const REQUEST_KEY = 'O43z0dpjhgX20SCx4KAo';
 
-  async function mintToken(contentBinding) {
+  // The BotGuard challenge/integrity-token setup is expensive (several network round
+  // trips) but not video-specific — cache it and reuse across videos until its
+  // server-given TTL expires. Only the final mintAsWebsafeString(videoId) call below
+  // needs to vary per video, and that's a cheap local computation.
+  let cachedMinter = null; // { minter, readyAtMs, estimatedTtlSecs }
+
+  async function ensureMinter() {
+    const now = Date.now();
+    if (cachedMinter && (now - cachedMinter.readyAtMs) < cachedMinter.estimatedTtlSecs * 1000) {
+      return cachedMinter.minter;
+    }
+
     const challengeResponse = await getChallenge({
       requestKey: REQUEST_KEY,
       fetchFunction: fetch,
@@ -42,10 +54,10 @@
     const botguardResponse = await botGuardClient.snapshot({ webPoSignalOutput });
 
     const integrityTokenResponse = await fetch(
-      'https://jnn-pa.googleapis.com/$rpc/google.internal.waa.v1.Waa/GenerateIT',
+      buildURL('GenerateIT', false),
       {
         method: 'POST',
-        headers: { 'content-type': 'application/json+protobuf' },
+        headers: getHeaders(),
         body: JSON.stringify([REQUEST_KEY, botguardResponse]),
       },
     );
@@ -56,17 +68,19 @@
       { integrityToken, estimatedTtlSecs, mintRefreshThreshold, websafeFallbackToken },
       webPoSignalOutput,
     );
-    const poToken = await webPoMinter.mintAsWebsafeString(contentBinding);
-    return { poToken, estimatedTtlSecs };
+    cachedMinter = { minter: webPoMinter, readyAtMs: now, estimatedTtlSecs };
+    return webPoMinter;
   }
 
-  window.mintToken = function (contentBinding) {
-    mintToken(contentBinding)
-      .then(({ poToken, estimatedTtlSecs }) => {
-        window.AndroidBridge.onToken(poToken, String(estimatedTtlSecs));
+  window.mintToken = function (videoId) {
+    ensureMinter()
+      .then((minter) => minter.mintAsWebsafeString(videoId))
+      .then((poToken) => {
+        window.AndroidBridge.onToken(poToken, String(cachedMinter.estimatedTtlSecs));
       })
       .catch((e) => {
-        window.AndroidBridge.onError(String(e && e.message ? e.message : e));
+        const msg = (e && e.message) ? e.message : String(e);
+        window.AndroidBridge.onError(msg);
       });
   };
 </script>

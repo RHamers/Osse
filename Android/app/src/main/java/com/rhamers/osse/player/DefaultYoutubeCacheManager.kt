@@ -45,7 +45,7 @@ class DefaultYoutubeCacheManager(
         val cached = withContext(ioDispatcher) { db.youtubeCacheDao().getById(videoId) }
         if (cached != null) return AudioSource.YoutubeDownloaded(cached.localPath)
 
-        val urlWithToken = resolveTokenedUrl(videoUrl)
+        val urlWithToken = resolveTokenedUrl(videoId, videoUrl)
         scope.launch {
             inFlightMutex.withLock {
                 if (inFlight.containsKey(videoId)) return@launch
@@ -90,9 +90,9 @@ class DefaultYoutubeCacheManager(
     // plain query parameter appended to the already-correctly-signed URL
     // extractAudioUrl() returns — no changes to that URL's other parameters are needed.
     // See docs/superpowers/specs/2026-09-15-youtube-potoken-design.md.
-    private suspend fun resolveTokenedUrl(videoUrl: String): String {
+    private suspend fun resolveTokenedUrl(videoId: String, videoUrl: String): String {
         val rawUrl = withContext(ioDispatcher) { extractor.extractAudioUrl(videoUrl) }
-        val token = poTokenProvider.getToken()
+        val token = poTokenProvider.getToken(videoId)
         val separator = if ('?' in rawUrl) "&" else "?"
         return "$rawUrl${separator}pot=${URLEncoder.encode(token, "UTF-8")}"
     }
@@ -105,7 +105,7 @@ class DefaultYoutubeCacheManager(
         val audioPath = File(cacheDir, "$videoId.webm").absolutePath
         val thumbPath = File(cacheDir, "$videoId.jpg").absolutePath
         try {
-            val urlWithToken = resolveTokenedUrl(videoUrl)
+            val urlWithToken = resolveTokenedUrl(videoId, videoUrl)
             downloadAudioFile(urlWithToken, audioPath)
             downloadThumbnail(metadata.thumbnailUrl, thumbPath)
             withContext(ioDispatcher) {
