@@ -24,10 +24,10 @@ ARM64 devices only.
 
 ## Build
 
-Requirements: JDK 17, Android SDK + NDK r23c, Go 1.26+, [gomobile](https://pkg.go.dev/golang.org/x/mobile/cmd/gomobile).
+Requirements: JDK 17, Android SDK + NDK r23c.
 
 ```bash
-./build.sh            # Go AAR + debug APK
+./build.sh            # debug APK
 ./build.sh --release  # + release APK
 ```
 
