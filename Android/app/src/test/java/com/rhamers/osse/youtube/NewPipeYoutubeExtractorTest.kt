@@ -30,7 +30,7 @@ class NewPipeYoutubeExtractorTest {
 
         val best = selectBestAudioStream(streams)
 
-        assertEquals("251", best?.id())
+        assertEquals("251", best?.id)
     }
 
     @Test
