@@ -27,6 +27,7 @@ class DefaultYoutubeCacheManager(
     private val scope: CoroutineScope,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val downloadThumbnail: suspend (url: String, destPath: String) -> Unit = ::httpDownloadFile,
+    private val downloadAudioFile: suspend (streamUrl: String, destPath: String) -> Unit,
     private val onCached: ((streamUrl: String, localPath: String) -> Unit)? = null,
 ) : YoutubeCacheManager {
 
@@ -90,7 +91,8 @@ class DefaultYoutubeCacheManager(
         val audioPath = File(cacheDir, "$videoId.webm").absolutePath
         val thumbPath = File(cacheDir, "$videoId.jpg").absolutePath
         try {
-            withContext(ioDispatcher) { extractor.downloadAudio(videoUrl, audioPath) }
+            val streamUrl = withContext(ioDispatcher) { extractor.extractAudioUrl(videoUrl) }
+            withContext(ioDispatcher) { downloadAudioFile(streamUrl, audioPath) }
             downloadThumbnail(metadata.thumbnailUrl, thumbPath)
             withContext(ioDispatcher) {
                 db.youtubeCacheDao().insert(
@@ -122,6 +124,23 @@ private val sharedHttpClient = OkHttpClient.Builder()
 private suspend fun httpDownloadFile(url: String, destPath: String) {
     withContext(Dispatchers.IO) {
         val response = sharedHttpClient.newCall(Request.Builder().url(url).build()).execute()
+        if (!response.isSuccessful) throw IOException("HTTP ${response.code} downloading $url")
+        val dest = File(destPath)
+        dest.parentFile?.mkdirs()
+        response.body?.byteStream()?.use { input ->
+            dest.outputStream().use { output -> input.copyTo(output) }
+        } ?: throw IOException("Empty response body for $url")
+    }
+}
+
+// Downloading a googlevideo audio stream requires the same User-Agent that was used to
+// obtain it (see YoutubeExtractor.playbackUserAgent()) — module-visible (not file-private)
+// so MultiTrackService (Task 6) can bind it with NewPipeYoutubeExtractor.playbackUserAgent().
+internal suspend fun httpDownloadAudioFile(url: String, destPath: String, userAgent: String) {
+    withContext(Dispatchers.IO) {
+        val response = sharedHttpClient.newCall(
+            Request.Builder().url(url).header("User-Agent", userAgent).build()
+        ).execute()
         if (!response.isSuccessful) throw IOException("HTTP ${response.code} downloading $url")
         val dest = File(destPath)
         dest.parentFile?.mkdirs()

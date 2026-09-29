@@ -56,6 +56,9 @@ class YoutubeCacheManagerTest {
         thumbnailDownloader: suspend (String, String) -> Unit = { _, destPath ->
             File(destPath).apply { parentFile?.mkdirs(); createNewFile() }
         },
+        audioDownloader: suspend (String, String) -> Unit = { _, destPath ->
+            File(destPath).apply { parentFile?.mkdirs(); createNewFile() }
+        },
         onCached: ((String, String) -> Unit)? = null,
     ) = DefaultYoutubeCacheManager(
         extractor = extractor,
@@ -64,6 +67,7 @@ class YoutubeCacheManagerTest {
         scope = testScope,
         ioDispatcher = UnconfinedTestDispatcher(testScope.testScheduler),
         downloadThumbnail = thumbnailDownloader,
+        downloadAudioFile = audioDownloader,
         onCached = onCached,
     )
 
@@ -104,16 +108,33 @@ class YoutubeCacheManagerTest {
     @Test
     fun `resolveSource does not invoke onCached when background download fails`() = testScope.runTest {
         var called = false
-        manager(extractor = failingDownloadExtractor(), onCached = { _, _ -> called = true })
-            .resolveSource("vid1", "https://youtube.com/watch?v=vid1", metadata())
+        manager(
+            audioDownloader = { _, _ -> throw RuntimeException("disk full") },
+            onCached = { _, _ -> called = true },
+        ).resolveSource("vid1", "https://youtube.com/watch?v=vid1", metadata())
         advanceUntilIdle()
         assertFalse(called)
     }
 
     @Test
     fun `resolveSource failed background download leaves no row`() = testScope.runTest {
-        val m = manager(extractor = failingDownloadExtractor())
+        val m = manager(audioDownloader = { _, _ -> throw RuntimeException("disk full") })
         m.resolveSource("vid1", "https://youtube.com/watch?v=vid1", metadata())
+        advanceUntilIdle()
+        assertNull(db.youtubeCacheDao().getById("vid1"))
+    }
+
+    @Test
+    fun `resolveSource failed background extraction leaves no row`() = testScope.runTest {
+        val m = manager(extractor = extractingFailsExtractor())
+        // resolveSource itself throws when extraction fails (it's called outside the
+        // background launch — see DefaultYoutubeCacheManager.resolveSource), so the
+        // background path is never reached.
+        try {
+            m.resolveSource("vid1", "https://youtube.com/watch?v=vid1", metadata())
+            fail("expected extraction failure to propagate")
+        } catch (_: RuntimeException) {
+        }
         advanceUntilIdle()
         assertNull(db.youtubeCacheDao().getById("vid1"))
     }
@@ -134,8 +155,8 @@ class YoutubeCacheManagerTest {
     }
 
     @Test
-    fun `downloadAndCache propagates extractor failure`() = testScope.runTest {
-        val m = manager(extractor = failingDownloadExtractor())
+    fun `downloadAndCache propagates a download failure`() = testScope.runTest {
+        val m = manager(audioDownloader = { _, _ -> throw RuntimeException("disk full") })
         var threw = false
         try {
             m.downloadAndCache("vid1", "https://youtube.com/watch?v=vid1", metadata())
@@ -143,6 +164,24 @@ class YoutubeCacheManagerTest {
             threw = true
         }
         assertTrue("expected RuntimeException", threw)
+        assertNull(db.youtubeCacheDao().getById("vid1"))
+    }
+
+    @Test
+    fun `downloadAndCache propagates an extraction failure without downloading`() = testScope.runTest {
+        var downloadCalled = false
+        val m = manager(
+            extractor = extractingFailsExtractor(),
+            audioDownloader = { _, _ -> downloadCalled = true },
+        )
+        var threw = false
+        try {
+            m.downloadAndCache("vid1", "https://youtube.com/watch?v=vid1", metadata())
+        } catch (e: RuntimeException) {
+            threw = true
+        }
+        assertTrue("expected RuntimeException", threw)
+        assertFalse(downloadCalled)
         assertNull(db.youtubeCacheDao().getById("vid1"))
     }
 
@@ -178,18 +217,14 @@ class YoutubeCacheManagerTest {
 
     private fun successExtractor() = object : YoutubeExtractor {
         override suspend fun extractAudioUrl(videoUrl: String) = "https://fake-stream.example.com/audio"
-        override suspend fun downloadAudio(videoUrl: String, outputPath: String) {
-            File(outputPath).apply { parentFile?.mkdirs(); createNewFile() }
-        }
         override suspend fun searchVideos(query: String, maxResults: Int) =
             listOf(VideoSearchResult("vid1", "Lofi Beats", "Lofi Girl", 225L))
         override fun playbackUserAgent() = "fake-ua"
     }
 
-    private fun failingDownloadExtractor() = object : YoutubeExtractor {
-        override suspend fun extractAudioUrl(videoUrl: String) = "https://fake-stream.example.com/audio"
-        override suspend fun downloadAudio(videoUrl: String, outputPath: String) =
-            throw RuntimeException("disk full")
+    private fun extractingFailsExtractor() = object : YoutubeExtractor {
+        override suspend fun extractAudioUrl(videoUrl: String): String =
+            throw RuntimeException("video unavailable")
         override suspend fun searchVideos(query: String, maxResults: Int) = emptyList<VideoSearchResult>()
         override fun playbackUserAgent() = "fake-ua"
     }
