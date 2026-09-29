@@ -27,7 +27,10 @@ import com.rhamers.osse.model.PlaybackSourceType
 import com.rhamers.osse.model.TrackId
 import com.rhamers.osse.model.toPlaybackRef
 import com.rhamers.osse.player.DefaultYoutubeCacheManager
-import com.rhamers.osse.youtube.YoutubeAudio
+import com.rhamers.osse.youtube.NewPipePoTokenProvider
+import com.rhamers.osse.youtube.NewPipeYoutubeExtractor
+import com.rhamers.osse.youtube.OkHttpNewPipeDownloader
+import com.rhamers.osse.youtube.WebViewPoTokenProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -43,6 +46,9 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import org.schabi.newpipe.extractor.NewPipe
+import org.schabi.newpipe.extractor.services.youtube.extractors.YoutubeStreamExtractor
 
 class MultiTrackService : MediaSessionService() {
 
@@ -52,6 +58,7 @@ class MultiTrackService : MediaSessionService() {
     private val _activeTrackIds = MutableStateFlow<List<TrackId>>(emptyList())
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private lateinit var cacheManager: YoutubeCacheManager
+    private lateinit var poTokenProvider: WebViewPoTokenProvider
 
     private val audioManager: AudioManager by lazy {
         getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -363,11 +370,19 @@ class MultiTrackService : MediaSessionService() {
             IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY),
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
+
+        NewPipe.init(OkHttpNewPipeDownloader(OkHttpClient()))
+        poTokenProvider = WebViewPoTokenProvider(this)
+        YoutubeStreamExtractor.setPoTokenProvider(NewPipePoTokenProvider(poTokenProvider))
+
         cacheManager = DefaultYoutubeCacheManager(
-            extractor = YoutubeAudio,
+            extractor = NewPipeYoutubeExtractor,
             cacheDir = (getExternalFilesDir("youtube") ?: filesDir).also { it.mkdirs() },
             db = OsseDatabase.get(this),
             scope = serviceScope,
+            downloadAudioFile = { url, destPath ->
+                httpDownloadAudioFile(url, destPath, NewPipeYoutubeExtractor.playbackUserAgent())
+            },
             onCached = { streamUrl, localPath ->
                 // Background download finished: swap any track still streaming from the
                 // now-expiring CDN URL to the permanent local file, preserving position.
@@ -560,6 +575,7 @@ class MultiTrackService : MediaSessionService() {
     override fun onDestroy() {
         unregisterReceiver(noisyReceiver)
         abandonAudioFocus()
+        poTokenProvider.destroy()
         serviceScope.cancel()
         mediaSession?.release()
         mediaSession = null

@@ -15,7 +15,7 @@ import com.rhamers.osse.model.AudioSource
 import com.rhamers.osse.model.TrackId
 import com.rhamers.osse.model.TrackState
 import com.rhamers.osse.model.toMediaItem
-import com.rhamers.osse.youtube.YoutubeAudio
+import com.rhamers.osse.youtube.NewPipeYoutubeExtractor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -33,8 +33,9 @@ class TrackPlayer(
     val trackId: TrackId,
     private val retryDelaysMs: LongArray = DEFAULT_RETRY_DELAYS_MS,
     // Overridable so unit tests can verify the switch below without touching the real
-    // gomobile/JNI binding (YoutubeAudio.playbackUserAgent(), which needs a real device).
-    private val youtubePlaybackUserAgent: () -> String = { YoutubeAudio.playbackUserAgent() },
+    // NewPipeExtractor/WebView-backed extraction (NewPipeYoutubeExtractor.playbackUserAgent(),
+    // which needs live network access).
+    private val youtubePlaybackUserAgent: () -> String = { NewPipeYoutubeExtractor.playbackUserAgent() },
 ) {
 
     // YouTube's CDN ties a signed stream URL to the player-client identity that requested
@@ -42,7 +43,7 @@ class TrackPlayer(
     // always gets rejected outright. This factory starts with a generic browser UA (fine
     // for RSS/local sources) and is switched to the extraction library's actual client UA
     // in setSource() whenever the source is a YoutubeStream — see
-    // YoutubeAudio.playbackUserAgent().
+    // NewPipeYoutubeExtractor.playbackUserAgent().
     private val httpDataSourceFactory = DefaultHttpDataSource.Factory()
         .setUserAgent(BROWSER_USER_AGENT)
 
