@@ -49,7 +49,7 @@ class DefaultYoutubeCacheManager(
                 inFlight[videoId] = coroutineContext[Job]!!
             }
             try {
-                val local = saveToCache(videoId, videoUrl, metadata) as AudioSource.YoutubeDownloaded
+                val local = saveToCache(videoId, videoUrl, metadata, knownStreamUrl = streamUrl) as AudioSource.YoutubeDownloaded
                 onCached?.invoke(streamUrl, local.localPath)
             } catch (_: Exception) {
             } finally {
@@ -87,11 +87,12 @@ class DefaultYoutubeCacheManager(
         videoId: String,
         videoUrl: String,
         metadata: YoutubeVideoMetadata,
+        knownStreamUrl: String? = null,
     ): AudioSource {
         val audioPath = File(cacheDir, "$videoId.webm").absolutePath
         val thumbPath = File(cacheDir, "$videoId.jpg").absolutePath
         try {
-            val streamUrl = withContext(ioDispatcher) { extractor.extractAudioUrl(videoUrl) }
+            val streamUrl = knownStreamUrl ?: withContext(ioDispatcher) { extractor.extractAudioUrl(videoUrl) }
             withContext(ioDispatcher) { downloadAudioFile(streamUrl, audioPath) }
             downloadThumbnail(metadata.thumbnailUrl, thumbPath)
             withContext(ioDispatcher) {
@@ -116,36 +117,32 @@ class DefaultYoutubeCacheManager(
     }
 }
 
-private val sharedHttpClient = OkHttpClient.Builder()
+// internal (not private) so MultiTrackService can reuse it instead of constructing a
+// redundant second OkHttpClient for its own NewPipeExtractor downloader.
+internal val sharedHttpClient = OkHttpClient.Builder()
     .connectTimeout(10, TimeUnit.SECONDS)
     .readTimeout(30, TimeUnit.SECONDS)
     .build()
 
-private suspend fun httpDownloadFile(url: String, destPath: String) {
+private suspend fun httpGetToFile(url: String, destPath: String, userAgent: String?) {
     withContext(Dispatchers.IO) {
-        val response = sharedHttpClient.newCall(Request.Builder().url(url).build()).execute()
-        if (!response.isSuccessful) throw IOException("HTTP ${response.code} downloading $url")
-        val dest = File(destPath)
-        dest.parentFile?.mkdirs()
-        response.body?.byteStream()?.use { input ->
-            dest.outputStream().use { output -> input.copyTo(output) }
-        } ?: throw IOException("Empty response body for $url")
+        val requestBuilder = Request.Builder().url(url)
+        if (userAgent != null) requestBuilder.header("User-Agent", userAgent)
+        sharedHttpClient.newCall(requestBuilder.build()).execute().use { response ->
+            if (!response.isSuccessful) throw IOException("HTTP ${response.code} downloading $url")
+            val dest = File(destPath)
+            dest.parentFile?.mkdirs()
+            response.body?.byteStream()?.use { input ->
+                dest.outputStream().use { output -> input.copyTo(output) }
+            } ?: throw IOException("Empty response body for $url")
+        }
     }
 }
 
+private suspend fun httpDownloadFile(url: String, destPath: String) = httpGetToFile(url, destPath, userAgent = null)
+
 // Downloading a googlevideo audio stream requires the same User-Agent that was used to
 // obtain it (see YoutubeExtractor.playbackUserAgent()) — module-visible (not file-private)
-// so MultiTrackService (Task 6) can bind it with NewPipeYoutubeExtractor.playbackUserAgent().
-internal suspend fun httpDownloadAudioFile(url: String, destPath: String, userAgent: String) {
-    withContext(Dispatchers.IO) {
-        val response = sharedHttpClient.newCall(
-            Request.Builder().url(url).header("User-Agent", userAgent).build()
-        ).execute()
-        if (!response.isSuccessful) throw IOException("HTTP ${response.code} downloading $url")
-        val dest = File(destPath)
-        dest.parentFile?.mkdirs()
-        response.body?.byteStream()?.use { input ->
-            dest.outputStream().use { output -> input.copyTo(output) }
-        } ?: throw IOException("Empty response body for $url")
-    }
-}
+// so MultiTrackService can bind it with NewPipeYoutubeExtractor.playbackUserAgent().
+internal suspend fun httpDownloadAudioFile(url: String, destPath: String, userAgent: String) =
+    httpGetToFile(url, destPath, userAgent)

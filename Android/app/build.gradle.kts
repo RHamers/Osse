@@ -150,7 +150,7 @@ dependencies {
     // QR code generation (release-share screen)
     implementation(libs.qrcode.kotlin)
 
-    // NewPipeExtractor (see ADR-002 update — replaces the ytaudio gomobile AAR)
+    // NewPipeExtractor (see ADR-009 — replaces the ytaudio gomobile AAR, ADR-002/003)
     implementation(libs.newpipe.extractor)
     coreLibraryDesugaring(libs.desugar.jdk.libs.nio)
 

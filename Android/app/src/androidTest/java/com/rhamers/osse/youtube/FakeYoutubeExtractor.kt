@@ -7,5 +7,5 @@ class FakeYoutubeExtractor(
     override suspend fun extractAudioUrl(videoUrl: String): String = streamResult.getOrThrow()
     override suspend fun searchVideos(query: String, maxResults: Int): List<VideoSearchResult> =
         searchResult.getOrThrow()
-    override fun playbackUserAgent(): String = "FakeYoutubeExtractor/1.0"
+    override fun playbackUserAgent(streamUrl: String): String = "FakeYoutubeExtractor/1.0"
 }

@@ -70,6 +70,7 @@ import com.rhamers.osse.player.TrackPlayer
 import com.rhamers.osse.player.YoutubeCacheManager
 import com.rhamers.osse.youtube.VideoSearchResult
 import com.rhamers.osse.youtube.YoutubeVideoMetadata
+import java.util.Locale
 import java.util.UUID
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
@@ -509,7 +510,10 @@ fun TrackCard(
                     modifier = Modifier.weight(1f).semantics { testTag = "speed_slider" }
                 )
                 Text(
-                    "${"%.1f".format(state.speed)}x",
+                    // Locale.US, not the device default: the device may use a
+                    // comma decimal separator (e.g. en-NL), but "1.5x" must always
+                    // render with a period to match this label's own test expectations.
+                    "${String.format(Locale.US, "%.1f", state.speed)}x",
                     style = MaterialTheme.typography.labelSmall,
                     modifier = Modifier.widthIn(min = 36.dp)
                 )

@@ -39,13 +39,6 @@
 -keep class org.mozilla.javascript.** { *; }
 -dontwarn org.mozilla.javascript.**
 
-# The PoToken WebView bridge is called from JS via reflection (@JavascriptInterface);
-# R8 renaming these methods in release builds breaks the bridge silently (JS calls a
-# method that no longer exists, swallowed as a JS-side error with no Kotlin stack trace).
--keepclassmembers class com.rhamers.osse.youtube.WebViewPoTokenProvider$Bridge {
-    @android.webkit.JavascriptInterface <methods>;
-}
-
 # Keep Gson-(de)serialized model classes. Gson maps JSON keys to fields by reflection using
 # the field's name (falling back to it even when @SerializedName is present, if the annotation
 # were ever stripped) — without these rules R8 renames fields in release builds and every

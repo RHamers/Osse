@@ -219,13 +219,34 @@ class YoutubeCacheManagerTest {
         override suspend fun extractAudioUrl(videoUrl: String) = "https://fake-stream.example.com/audio"
         override suspend fun searchVideos(query: String, maxResults: Int) =
             listOf(VideoSearchResult("vid1", "Lofi Beats", "Lofi Girl", 225L))
-        override fun playbackUserAgent() = "fake-ua"
+        override fun playbackUserAgent(streamUrl: String) = "fake-ua"
     }
 
     private fun extractingFailsExtractor() = object : YoutubeExtractor {
         override suspend fun extractAudioUrl(videoUrl: String): String =
             throw RuntimeException("video unavailable")
         override suspend fun searchVideos(query: String, maxResults: Int) = emptyList<VideoSearchResult>()
-        override fun playbackUserAgent() = "fake-ua"
+        override fun playbackUserAgent(streamUrl: String) = "fake-ua"
+    }
+
+    // Wraps successExtractor() and counts extractAudioUrl invocations, so a test can prove
+    // resolveSource's background save reuses the URL it already extracted up front instead
+    // of extracting a second time.
+    private class CountingExtractor(private val delegate: YoutubeExtractor) : YoutubeExtractor {
+        var extractCallCount = 0
+        override suspend fun extractAudioUrl(videoUrl: String): String {
+            extractCallCount++
+            return delegate.extractAudioUrl(videoUrl)
+        }
+        override suspend fun searchVideos(query: String, maxResults: Int) = delegate.searchVideos(query, maxResults)
+        override fun playbackUserAgent(streamUrl: String) = delegate.playbackUserAgent(streamUrl)
+    }
+
+    @Test
+    fun `resolveSource background save does not re-extract the stream url`() = testScope.runTest {
+        val counting = CountingExtractor(successExtractor())
+        manager(extractor = counting).resolveSource("vid1", "https://youtube.com/watch?v=vid1", metadata())
+        advanceUntilIdle()
+        assertEquals(1, counting.extractCallCount)
     }
 }

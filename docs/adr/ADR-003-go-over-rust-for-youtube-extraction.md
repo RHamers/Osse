@@ -1,7 +1,7 @@
 ---
 id: ADR-003
 title: Go over Rust for the YouTube extraction library
-status: accepted
+status: superseded by ADR-009
 date: 2026-04-29
 ---
 

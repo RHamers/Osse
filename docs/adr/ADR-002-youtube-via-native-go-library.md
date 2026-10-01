@@ -1,7 +1,7 @@
 ---
 id: ADR-002
 title: YouTube audio extraction via native Go library (gomobile)
-status: accepted
+status: superseded by ADR-009
 date: 2026-04-29
 ---
 

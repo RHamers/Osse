@@ -33,16 +33,16 @@ class TrackPlayer(
     val trackId: TrackId,
     private val retryDelaysMs: LongArray = DEFAULT_RETRY_DELAYS_MS,
     // Overridable so unit tests can verify the switch below without touching the real
-    // NewPipeExtractor/WebView-backed extraction (NewPipeYoutubeExtractor.playbackUserAgent(),
+    // NewPipeExtractor-backed extraction (NewPipeYoutubeExtractor.playbackUserAgent(),
     // which needs live network access).
-    private val youtubePlaybackUserAgent: () -> String = { NewPipeYoutubeExtractor.playbackUserAgent() },
+    private val youtubePlaybackUserAgent: (streamUrl: String) -> String = { NewPipeYoutubeExtractor.playbackUserAgent(it) },
 ) {
 
     // YouTube's CDN ties a signed stream URL to the player-client identity that requested
-    // it and 403s a mismatched User-Agent; ExoPlayer's own default "ExoPlayer/..." UA
-    // always gets rejected outright. This factory starts with a generic browser UA (fine
-    // for RSS/local sources) and is switched to the extraction library's actual client UA
-    // in setSource() whenever the source is a YoutubeStream — see
+    // it (Android, iOS, or visionOS) and 403s a mismatched User-Agent; ExoPlayer's own
+    // default "ExoPlayer/..." UA always gets rejected outright. This factory starts with a
+    // generic browser UA (fine for RSS/local sources) and is switched to the matching
+    // client UA in setSource() whenever the source is a YoutubeStream — see
     // NewPipeYoutubeExtractor.playbackUserAgent().
     private val httpDataSourceFactory = DefaultHttpDataSource.Factory()
         .setUserAgent(BROWSER_USER_AGENT)
@@ -138,7 +138,7 @@ class TrackPlayer(
         pendingRetryJob = null
         retryAttempt = 0
         if (source is AudioSource.YoutubeStream) {
-            activeUserAgent = youtubePlaybackUserAgent()
+            activeUserAgent = youtubePlaybackUserAgent(source.youtubeUrl)
             httpDataSourceFactory.setUserAgent(activeUserAgent)
         }
         _state.value = _state.value.copy(source = source, title = title)

@@ -4,8 +4,11 @@ import com.rhamers.osse.ui.tracks.extractYoutubeVideoId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.schabi.newpipe.extractor.InfoItem
+import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.ServiceList
+import org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper
 import org.schabi.newpipe.extractor.stream.AudioStream
+import org.schabi.newpipe.extractor.stream.AudioTrackType
 import java.io.IOException
 
 object NewPipeYoutubeExtractor : YoutubeExtractor {
@@ -25,16 +28,26 @@ object NewPipeYoutubeExtractor : YoutubeExtractor {
             toVideoSearchResults(extractor.initialPage.items, maxResults)
         }
 
-    // NewPipeExtractor's WEB client — used for both search and stream extraction here —
-    // impersonates the YouTube desktop website; a googlevideo URL it obtains must be
-    // requested with a matching desktop-browser UA or the CDN rejects it.
-    override fun playbackUserAgent(): String =
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) " +
-            "Chrome/91.0.4472.124 Safari/537.36"
+    // The CDN URL returned by extractAudioUrl() is bound to the client that requested it
+    // (Android, required; iOS/visionOS, optional overlays — see YoutubeStreamExtractor's
+    // real fetch logic) and must be requested with a matching User-Agent, or the CDN
+    // rejects it. There is no "WEB client" URL in this app's actual extraction path.
+    override fun playbackUserAgent(streamUrl: String): String {
+        val localization = NewPipe.getPreferredLocalization()
+        return when {
+            YoutubeParsingHelper.isIosStreamingUrl(streamUrl) -> YoutubeParsingHelper.getIosUserAgent(localization)
+            YoutubeParsingHelper.isVisionOsStreamingUrl(streamUrl) -> YoutubeParsingHelper.getVisionOsUserAgent(localization)
+            else -> YoutubeParsingHelper.getAndroidUserAgent(localization)
+        }
+    }
 }
 
-internal fun selectBestAudioStream(streams: List<AudioStream>): AudioStream? =
-    streams.maxByOrNull { it.averageBitrate }
+internal fun selectBestAudioStream(streams: List<AudioStream>): AudioStream? {
+    val originalTracks = streams.filter {
+        it.audioTrackType == null || it.audioTrackType == AudioTrackType.ORIGINAL
+    }
+    return originalTracks.ifEmpty { streams }.maxByOrNull { it.averageBitrate }
+}
 
 internal fun toVideoSearchResults(items: List<InfoItem>, maxResults: Int): List<VideoSearchResult> =
     items.filterIsInstance<org.schabi.newpipe.extractor.stream.StreamInfoItem>()

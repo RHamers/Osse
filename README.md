@@ -24,7 +24,7 @@ ARM64 devices only.
 
 ## Build
 
-Requirements: JDK 17, Android SDK + NDK r23c.
+Requirements: JDK 17, Android SDK.
 
 ```bash
 ./build.sh            # debug APK
