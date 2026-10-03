@@ -51,7 +51,7 @@ locally on-device.
 - Sources:
   - **Local files** — primary and always-available source; plays from a local folder or
     curated local playlist
-  - **YouTube via native Go library** — stream or download audio from YouTube URLs
+  - **YouTube via NewPipeExtractor** — stream or download audio from YouTube URLs
     (see YouTube Integration section)
 - Per-track independent volume, playback speed, and source control
 - Background music track runs at its own volume level independent of the podcast track
@@ -104,70 +104,37 @@ fun AudioSource.toMediaItem(serverBase: String): MediaItem {
 
 ---
 
-## YouTube Integration (Native Go Library)
+## YouTube Integration (NewPipeExtractor)
 
 ### Decision
-YouTube audio extraction is implemented as a **native ARM64 Go library** bundled into the
-APK via `gomobile`. This avoids any dependency on a companion server or Python runtime.
-Only ARM64 is targeted — no fat binary needed.
-
-### Why Go over Rust
-- `kkdai/youtube` is a pure Go YouTube extraction library — actively maintained, no Python
-- `gomobile` provides clean Kotlin-callable `.aar` bindings with minimal boilerplate
-- Simpler cross-compilation story for this use case compared to Rust + JNI
+YouTube audio extraction uses **NewPipeExtractor** (`com.github.teamnewpipe:NewPipeExtractor`,
+a Java library, via JitPack), replacing an earlier native Go/gomobile approach (ADR-002/003,
+superseded — see ADR-009). The Go toolchain could never pass YouTube's GVS PoToken anti-bot
+check for any client it could parse; NewPipeExtractor's Android-client extraction path works
+without one under current YouTube enforcement, verified on-device.
 
 ### Components
-- **`kkdai/youtube`** — extracts direct audio stream URLs from YouTube without downloading
-- **`ffmpeg-kit` (Android AAR)** — pre-built ARM64 ffmpeg for transcoding; avoids compiling
-  ffmpeg from source
-- **`u2takey/ffmpeg-go`** — Go bindings to ffmpeg for the download path
+- **`NewPipeYoutubeExtractor`** (`com.rhamers.osse.youtube`) — implements `YoutubeExtractor`;
+  wraps NewPipeExtractor's `StreamingService` for search and stream-URL extraction.
+- **`OkHttpNewPipeDownloader`** — the HTTP transport NewPipeExtractor uses for every network
+  call, built on the app's existing OkHttp dependency (no second HTTP client).
+- **`DefaultYoutubeCacheManager`** — extracts a stream URL, then downloads it separately
+  (`extractAudioUrl` + a generic authenticated GET), caching to Room + local storage.
 
-### Go Library Structure (`/ytaudio` module)
-
-```go
-// ExtractAudioURL returns the direct streamable audio URL for a YouTube video.
-// Called from Kotlin for the stream-direct use case.
-func ExtractAudioURL(videoURL string) (string, error)
-
-// DownloadAsMp3 downloads and transcodes audio to MP3 at the given output path.
-// Called from Kotlin for the download-to-local-library use case.
-func DownloadAsMp3(videoURL string, outputPath string) error
-```
-
-### Building the AAR
-
-```bash
-go install golang.org/x/mobile/cmd/gomobile@latest
-gomobile init
-gomobile bind -target=android/arm64 -o ytaudio.aar ./ytaudio
-```
-
-Drop `ytaudio.aar` into the Android project's `libs/` directory.
-
-### Kotlin Usage
-
-```kotlin
-import ytaudio.Ytaudio
-
-// Stream directly — pass URL to ExoPlayer
-val streamUrl = Ytaudio.extractAudioURL("https://youtube.com/watch?v=...")
-val mediaItem = MediaItem.fromUri(streamUrl)
-player.setMediaItem(mediaItem)
-
-// Download to local library
-Ytaudio.downloadAsMp3("https://youtube.com/watch?v=...", localOutputPath)
-```
-
-### Dual Mode: Stream vs Download
-- **Stream:** `ExtractAudioURL` returns a direct URL; ExoPlayer streams it in real-time.
-  No file written to disk.
-- **Download:** `DownloadAsMp3` writes an MP3 to local storage. Subsequent playback uses
-  `AudioSource.YoutubeDownloaded` which resolves to a local file URI — zero network dependency.
+### Playback User-Agent
+A googlevideo CDN URL is bound to the client that requested it (Android, required;
+iOS/visionOS, optional) and must be requested with a matching User-Agent —
+`NewPipeYoutubeExtractor.playbackUserAgent(streamUrl)` picks the right one per URL using
+NewPipeExtractor's own `YoutubeParsingHelper` client-detection helpers. There is no "WEB
+client" URL anywhere in this app's actual extraction path, despite earlier design
+assumptions to the contrary (see the design spec's correction history).
 
 ### Maintenance Note
-`kkdai/youtube` occasionally breaks when YouTube changes its innertube API — same fundamental
-problem as yt-dlp, with a slower update cadence. Keep the dependency pinned and updated.
-Extraction breakage is the expected failure mode, not a bug in the app.
+NewPipeExtractor occasionally needs updates when YouTube changes its innertube API — same
+fundamental problem the old Go library had, same expected failure mode. Keep the dependency
+pinned and updated on breakage; always verify API assumptions against the exact pinned
+release tag, not the `dev` branch (a `dev`-vs-tag mismatch caused real rework during this
+migration).
 
 ---
 
@@ -229,14 +196,8 @@ app/
         db/                — Room database, DAOs, entities
         repository/        — PodcastRepository, MusicRepository
       model/               — AudioSource, Track, Episode, Podcast, Playlist
-      youtube/             — Kotlin wrapper around ytaudio gomobile bindings
+      youtube/             — NewPipeExtractor-backed YoutubeExtractor + OkHttp downloader
       rss/                 — RSS + OPML parser
-  libs/
-    ytaudio.aar            — gomobile-built Go library
-
-ytaudio/                   — Go module (sibling to app/)
-  ytaudio.go               — ExtractAudioURL, DownloadAsMp3
-  go.mod
 ```
 
 ---
@@ -249,8 +210,7 @@ ytaudio/                   — Go module (sibling to app/)
 | `androidx.media3:media3-session` | MediaSession / background service |
 | `androidx.media3:media3-ui` | Optional player UI components |
 | `androidx.room` | SQLite ORM |
-| `ffmpeg-kit-android` (audio variant) | ARM64 ffmpeg for transcoding |
-| `ytaudio.aar` | gomobile Go library for YouTube extraction |
+| `NewPipeExtractor` | YouTube search/stream extraction |
 | Podcast Index API | Podcast search and discovery |
 | Retrofit + OkHttp | HTTP client for RSS fetching and API calls |
 | Coil | Artwork image loading |
@@ -264,7 +224,7 @@ ytaudio/                   — Go module (sibling to app/)
    else builds on.
 2. **RSS feed parsing + episode playback** — core podcast loop.
 3. **Local file music track** — simplest background music source, validates the dual-track UX.
-4. **YouTube Go library** — build and bind the gomobile AAR, wire up stream and download.
+4. **YouTube via NewPipeExtractor** — wire up search, stream extraction, and download.
 5. **Show notes view** — episode detail with rendered HTML/markdown, chapter markers.
 6. **Podcast Index search + OPML** — discovery and subscription management.
 7. **Per-podcast and per-track defaults** — persisted playback preferences.
@@ -283,3 +243,5 @@ ytaudio/                   — Go module (sibling to app/)
 - **ARM64 only** — no fat binary, no x86 emulator support needed. Personal device target.
 - **Pitch-corrected speed** — use `PlaybackParams` with pitch correction explicitly set.
   Raw rate adjustment produces chipmunk effect and is unacceptable.
+- **Go/gomobile replaced with NewPipeExtractor** — see ADR-009. The Go toolchain is gone
+  entirely; no native code remains in the app.

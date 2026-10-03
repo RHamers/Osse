@@ -76,6 +76,7 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
+        isCoreLibraryDesugaringEnabled = true
     }
 
     testOptions {
@@ -149,8 +150,9 @@ dependencies {
     // QR code generation (release-share screen)
     implementation(libs.qrcode.kotlin)
 
-    // ytaudio gomobile AAR (see ADR-002)
-    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar", "*.jar"))))
+    // NewPipeExtractor (see ADR-009 — replaces the ytaudio gomobile AAR, ADR-002/003)
+    implementation(libs.newpipe.extractor)
+    coreLibraryDesugaring(libs.desugar.jdk.libs.nio)
 
     // Test
     testImplementation(libs.junit)

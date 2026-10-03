@@ -28,34 +28,13 @@ proguard/
 *.jks
 *.keystore
 
-# Generated AAR / JAR (built artifacts, not source)
-# app/libs/ is excluded — pre-built AARs (e.g. ytaudio.aar) are committed there
+# Generated JAR (build artifact, not source)
 # gradle-wrapper.jar is excluded — required by ./gradlew, not a build artifact
 *.jar
-!app/libs/*.aar
 !Android/gradle/wrapper/gradle-wrapper.jar
 
 # Room generated schema exports (optional — remove if you want to track schema)
 # app/schemas/
-
-# ============================================================
-# Go
-# ============================================================
-# Compiled binaries and test output
-ytaudio/*.aar
-ytaudio/*.jar
-ytaudio/pkg/
-ytaudio/bin/
-
-# Go build cache artefacts
-*.test
-*.out
-
-# Vendor directory (if not vendoring)
-vendor/
-
-# gomobile intermediate output
-gomobile-build-*/
 
 # ============================================================
 # General

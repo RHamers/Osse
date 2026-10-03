@@ -27,7 +27,8 @@ import com.rhamers.osse.model.PlaybackSourceType
 import com.rhamers.osse.model.TrackId
 import com.rhamers.osse.model.toPlaybackRef
 import com.rhamers.osse.player.DefaultYoutubeCacheManager
-import com.rhamers.osse.youtube.YoutubeAudio
+import com.rhamers.osse.youtube.NewPipeYoutubeExtractor
+import com.rhamers.osse.youtube.OkHttpNewPipeDownloader
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -43,6 +44,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import org.schabi.newpipe.extractor.NewPipe
 
 class MultiTrackService : MediaSessionService() {
 
@@ -319,6 +321,15 @@ class MultiTrackService : MediaSessionService() {
             _activeTrackIds.value = emptyList()
             pausedByFocusLoss.clear()
             youtubeStreamCleared.clear()
+            // A pending double-press-window job (or the media-button-echo timestamp it's
+            // paired with) is service-instance state, not per-track state, so it survives
+            // the clears above. Left alone, a job scheduled by one test but not yet fired
+            // when that test ends can fire during the NEXT test (this binder/service is a
+            // singleton reused across the whole test class), making that next test's own
+            // first media-button press get misread as the second press of a double-press.
+            pendingPressJob?.cancel()
+            pendingPressJob = null
+            lastMediaButtonEventAtMs = 0L
         }
 
         fun simulateAudioFocusChange(focusChange: Int) {
@@ -363,11 +374,17 @@ class MultiTrackService : MediaSessionService() {
             IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY),
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
+
+        NewPipe.init(OkHttpNewPipeDownloader(sharedHttpClient))
+
         cacheManager = DefaultYoutubeCacheManager(
-            extractor = YoutubeAudio,
+            extractor = NewPipeYoutubeExtractor,
             cacheDir = (getExternalFilesDir("youtube") ?: filesDir).also { it.mkdirs() },
             db = OsseDatabase.get(this),
             scope = serviceScope,
+            downloadAudioFile = { url, destPath ->
+                httpDownloadAudioFile(url, destPath, NewPipeYoutubeExtractor.playbackUserAgent(url))
+            },
             onCached = { streamUrl, localPath ->
                 // Background download finished: swap any track still streaming from the
                 // now-expiring CDN URL to the permanent local file, preserving position.

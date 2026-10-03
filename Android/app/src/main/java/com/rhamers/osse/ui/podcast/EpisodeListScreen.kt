@@ -83,7 +83,10 @@ fun EpisodeListScreen(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        "Default speed: ${"%.1f".format(dialogSpeed)}x",
+                        // Locale.US, not the device default: the device may use a
+                        // comma decimal separator (e.g. en-NL), but "1.5x" must always
+                        // render with a period to match this label's own test expectations.
+                        "Default speed: ${String.format(Locale.US, "%.1f", dialogSpeed)}x",
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     Slider(

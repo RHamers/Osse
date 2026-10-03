@@ -34,8 +34,10 @@
 -keep class retrofit2.** { *; }
 -keep interface * { @retrofit2.http.* <methods>; }
 
-# Keep gomobile-generated ytaudio bindings
--keep class ytaudio.** { *; }
+# NewPipeExtractor uses Mozilla Rhino to run YouTube player JS (signature/cipher
+# decryption) — Rhino does reflection-heavy bytecode generation that R8 breaks silently.
+-keep class org.mozilla.javascript.** { *; }
+-dontwarn org.mozilla.javascript.**
 
 # Keep Gson-(de)serialized model classes. Gson maps JSON keys to fields by reflection using
 # the field's name (falling back to it even when @SerializedName is present, if the annotation

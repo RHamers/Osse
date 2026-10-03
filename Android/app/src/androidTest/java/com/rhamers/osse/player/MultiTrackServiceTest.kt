@@ -162,15 +162,14 @@ class MultiTrackServiceTest {
             }
         }
         instrumentation.runOnMainSync { binder.markCurrentEpisodeComplete() }
-        // Allow the IO coroutine to finish and its Main continuation to be posted
-        Thread.sleep(300)
-        // Drain the main Looper so the continuation (track.pause()) has run
-        instrumentation.runOnMainSync {}
-        var playWhenReady = true
-        instrumentation.runOnMainSync {
-            playWhenReady = binder.getTrack(TrackId.PODCAST)!!.player.playWhenReady
-        }
-        assertFalse(playWhenReady)
+        // Poll rather than a fixed Thread.sleep(300): markEpisodeComplete() finishes an IO
+        // coroutine before posting its Main continuation (track.pause()), and a fixed sleep
+        // flakes under load (e.g. running alongside the rest of the suite) when that
+        // round-trip takes longer than the sleep.
+        assertTrue(
+            "expected track to be paused after markCurrentEpisodeComplete",
+            waitUntilPaused(TrackId.PODCAST, timeoutMs = 3_000),
+        )
     }
 
     @Test
@@ -430,15 +429,15 @@ class MultiTrackServiceTest {
             binder.addTrack(TrackId.MUSIC).setSource(AudioSource.RssFeed("https://example.com/music.mp3"))
             binder.simulatePlayerCommandRequest(Player.COMMAND_PLAY_PAUSE)
         }
-        Thread.sleep(400)
-        instrumentation.runOnMainSync {}
-        var podcastPlaying = false
+        // Poll rather than a fixed Thread.sleep(400) — see the echo-window test below for why.
+        assertTrue(
+            "podcast should start playing from a bare command request",
+            waitUntilPlayWhenReady(TrackId.PODCAST, timeoutMs = 3_000),
+        )
         var musicPlaying = false
         instrumentation.runOnMainSync {
-            podcastPlaying = binder.getTrack(TrackId.PODCAST)!!.player.playWhenReady
             musicPlaying = binder.getTrack(TrackId.MUSIC)!!.player.playWhenReady
         }
-        assertTrue("podcast should start playing from a bare command request", podcastPlaying)
         assertTrue("music should start playing from a bare command request", musicPlaying)
     }
 
@@ -452,17 +451,20 @@ class MultiTrackServiceTest {
             binder.simulateMediaButtonPress()
             binder.simulatePlayerCommandRequest(Player.COMMAND_PLAY_PAUSE)
         }
-        Thread.sleep(400)
-        instrumentation.runOnMainSync {}
+        // Poll rather than a fixed Thread.sleep(400): the single-press handler's toggle
+        // fires after DOUBLE_PRESS_WINDOW_MS (300ms) via a coroutine delay(), which can
+        // overrun a fixed sleep under system load (e.g. running alongside the rest of
+        // the suite), flaking this assertion without any real bug.
+        assertTrue(
+            "podcast should play from a single logical press, not be treated as a double press",
+            waitUntilPlayWhenReady(TrackId.PODCAST, timeoutMs = 3_000),
+        )
         var podcastPosition = 0L
-        var podcastPlaying = false
         var musicPlaying = false
         instrumentation.runOnMainSync {
             podcastPosition = binder.getTrack(TrackId.PODCAST)!!.state.value.positionMs
-            podcastPlaying = binder.getTrack(TrackId.PODCAST)!!.player.playWhenReady
             musicPlaying = binder.getTrack(TrackId.MUSIC)!!.player.playWhenReady
         }
-        assertTrue("podcast should play from a single logical press, not be treated as a double press", podcastPlaying)
         assertTrue("music should play too, from the same single logical press", musicPlaying)
         assertEquals("the echoed command request must not seek/forward as a double press", 0L, podcastPosition)
     }
@@ -886,6 +888,19 @@ class MultiTrackServiceTest {
             }
             if (ready) return true
             Thread.sleep(100)
+        }
+        return false
+    }
+
+    private fun waitUntilPaused(id: TrackId, timeoutMs: Long): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            var playWhenReady = true
+            instrumentation.runOnMainSync {
+                playWhenReady = binder.getTrack(id)?.player?.playWhenReady == true
+            }
+            if (!playWhenReady) return true
+            Thread.sleep(50)
         }
         return false
     }
