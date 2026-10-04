@@ -290,7 +290,7 @@ class MultiTrackService : MediaSessionService() {
         return NotificationCompat.Builder(this, PLAYBACK_NOTIFICATION_CHANNEL_ID)
             .setContentTitle(getString(R.string.app_name))
             .setContentText("Playing")
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_notification)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
