@@ -1,5 +1,9 @@
 package com.rhamers.osse.player
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.Service
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -15,11 +19,13 @@ import android.os.IBinder
 import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent
+import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.media3.common.Player
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionResult
+import com.rhamers.osse.R
 import com.rhamers.osse.data.db.OsseDatabase
 import com.rhamers.osse.data.db.PlaybackStateEntity
 import com.rhamers.osse.model.AudioSource
@@ -244,6 +250,52 @@ class MultiTrackService : MediaSessionService() {
         if (session.player !== target) session.setPlayer(target)
     }
 
+    // Media3's own automatic foreground-promotion only reliably reacts to playback events on
+    // whichever player a MediaSession was ORIGINALLY built with. updateMediaSessionPlayer() above
+    // dynamically re-points the one session this service exposes at whichever track is actually
+    // playing — the session's public, system-facing state does update correctly when that
+    // happens, but Media3's own internal notification-refresh listener (attached per-player, not
+    // per-session) never fires reliably for a swapped-in player: confirmed on-device, zero
+    // foreground-service-start log entries and no notification ever appeared, even while MUSIC
+    // played continuously for minutes. Without a foreground notification, Android's background
+    // process freezer has no signal this process deserves an exemption, and it gets frozen ~2-3
+    // minutes after being backgrounded, silencing all audio — regardless of which track was
+    // playing. Managing startForeground()/stopForeground() explicitly here, driven directly by
+    // every track's own player listener, sidesteps Media3's internal event-routing entirely.
+    private var isInForeground = false
+
+    private fun updateForegroundState() {
+        val shouldBeForeground = anyTrackRequiresForeground(tracks.values)
+        if (shouldBeForeground && !isInForeground) {
+            // The plain (non-compat) 2-arg overload: on API 29+ this automatically uses
+            // whatever foregroundServiceType is declared for this service in the manifest
+            // (already set to "mediaPlayback"), with no extra androidx.core version needed.
+            startForeground(PLAYBACK_NOTIFICATION_ID, buildPlaybackNotification())
+            isInForeground = true
+        } else if (!shouldBeForeground && isInForeground) {
+            stopForeground(Service.STOP_FOREGROUND_REMOVE)
+            isInForeground = false
+        }
+    }
+
+    private fun buildPlaybackNotification(): Notification {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                PLAYBACK_NOTIFICATION_CHANNEL_ID,
+                "Playback",
+                NotificationManager.IMPORTANCE_LOW,
+            )
+            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+        }
+        return NotificationCompat.Builder(this, PLAYBACK_NOTIFICATION_CHANNEL_ID)
+            .setContentTitle(getString(R.string.app_name))
+            .setContentText("Playing")
+            .setSmallIcon(R.drawable.ic_notification)
+            .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .build()
+    }
+
     private fun toggleAllActiveTracks() {
         val active = tracks.values.filter { it.state.value.source != null }
         if (active.any { it.player.playWhenReady }) {
@@ -268,6 +320,11 @@ class MultiTrackService : MediaSessionService() {
             player.player.addListener(object : Player.Listener {
                 override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
                     updateMediaSessionPlayer()
+                    updateForegroundState()
+                }
+
+                override fun onPlaybackStateChanged(playbackState: Int) {
+                    updateForegroundState()
                 }
             })
             startPlaybackStatePersistence(id, player)
@@ -577,6 +634,10 @@ class MultiTrackService : MediaSessionService() {
     override fun onDestroy() {
         unregisterReceiver(noisyReceiver)
         abandonAudioFocus()
+        if (isInForeground) {
+            stopForeground(Service.STOP_FOREGROUND_REMOVE)
+            isInForeground = false
+        }
         serviceScope.cancel()
         mediaSession?.release()
         mediaSession = null
@@ -618,5 +679,16 @@ class MultiTrackService : MediaSessionService() {
         private const val DOUBLE_PRESS_WINDOW_MS = 300L
         private const val PERIODIC_FLUSH_INTERVAL_MS = 2_000L
         private const val MEDIA_BUTTON_ECHO_WINDOW_MS = 500L
+        private const val PLAYBACK_NOTIFICATION_ID = 1
+        private const val PLAYBACK_NOTIFICATION_CHANNEL_ID = "playback"
     }
 }
+
+// Mirrors MediaNotificationManager.shouldRunInForeground's own two-part condition
+// (playWhenReady + a state that's actually producing/about to produce audio), just evaluated
+// across every track instead of a single session's current player.
+internal fun anyTrackRequiresForeground(tracks: Collection<TrackPlayer>): Boolean =
+    tracks.any { track ->
+        track.player.playWhenReady &&
+            (track.player.playbackState == Player.STATE_READY || track.player.playbackState == Player.STATE_BUFFERING)
+    }
