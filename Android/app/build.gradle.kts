@@ -71,7 +71,23 @@ android {
                 abiFilters += "x86_64"
             }
         }
+        // Dedicated build type for connectedAndroidTest (see testBuildType below). Gradle's
+        // AGP always uninstalls the app it instrumented once a connected test run finishes —
+        // that's normal, non-optional cleanup, not a bug. Giving this variant its own
+        // applicationId means that cleanup uninstall can never land on the "debug" package
+        // installed for everyday personal use, even if a real phone (not the test emulator)
+        // happens to be the connected device when tests run.
+        create("instrumented") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".instrumented"
+            signingConfig = signingConfigs.getByName("debug")
+            ndk {
+                abiFilters += "x86_64"
+            }
+        }
     }
+
+    testBuildType = "instrumented"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
@@ -121,6 +137,12 @@ dependencies {
     implementation(libs.androidx.compose.material.icons.extended)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+    // "instrumented" is a near-clone of "debug" (see buildTypes) used only so
+    // connectedAndroidTest's app-under-test is never the daily-use debug install; it needs
+    // the same test-only manifest (hosts the empty activity Compose UI tests launch into)
+    // debugImplementation provides for the debug variant, since that config doesn't apply here.
+    "instrumentedImplementation"(libs.androidx.compose.ui.tooling)
+    "instrumentedImplementation"(libs.androidx.compose.ui.test.manifest)
 
     // Media3 / ExoPlayer (see ADR-001)
     implementation(libs.androidx.media3.exoplayer)
