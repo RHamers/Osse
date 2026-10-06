@@ -65,4 +65,4 @@ jobs:
           profile: pixel
           emulator-options: -no-snapshot -no-window -no-audio -gpu swiftshader_indirect
           disable-animations: true
-          script: cd Android && ./gradlew :app:connectedDebugAndroidTest
+          script: cd Android && ./gradlew :app:connectedInstrumentedAndroidTest -PtestBuildType=instrumented

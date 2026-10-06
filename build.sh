@@ -60,10 +60,12 @@ if $RUN_TESTS; then
     ok "Unit tests passed"
 
     step "Running instrumented tests"
-    # Targets the "instrumented" build type (com.rhamers.osse.instrumented), not "debug" —
-    # connectedAndroidTest always uninstalls the app it tested when it finishes, and this
-    # keeps that cleanup off the com.rhamers.osse package used for everyday personal use.
-    ./gradlew :app:connectedInstrumentedAndroidTest
+    # -PtestBuildType=instrumented targets the "instrumented" build type
+    # (com.rhamers.osse.instrumented) instead of "debug" — connectedAndroidTest always
+    # uninstalls the app it tested when it finishes, and this keeps that cleanup off the
+    # com.rhamers.osse package used for everyday personal use. Passed only here, not set in
+    # build.gradle.kts, so testDebugUnitTest above is unaffected.
+    ./gradlew :app:connectedInstrumentedAndroidTest -PtestBuildType=instrumented
     ok "Instrumented tests passed"
 fi
 

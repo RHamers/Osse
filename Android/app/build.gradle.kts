@@ -87,7 +87,14 @@ android {
         }
     }
 
-    testBuildType = "instrumented"
+    // Deliberately not hardcoding testBuildType = "instrumented": AGP ties that property to
+    // BOTH local-unit-test and connected-androidTest generation for a single build type, so
+    // doing it unconditionally would silently delete testDebugUnitTest (confirmed — it broke
+    // Robolectric testing entirely). Reading it from a project property instead means it
+    // stays "debug" (so testDebugUnitTest keeps working) unless something explicitly passes
+    // -PtestBuildType=instrumented — which only the instrumented-androidTest invocation does
+    // (see build.sh and .github/workflows/test.yml).
+    testBuildType = (project.findProperty("testBuildType") as String?) ?: "debug"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
