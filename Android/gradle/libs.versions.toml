@@ -12,6 +12,7 @@ lifecycleRuntimeKtx = "2.6.1"
 activityCompose = "1.8.0"
 composeBom = "2026.04.01"
 media3 = "1.5.1"
+media = "1.7.0"
 room = "2.7.1"
 retrofit = "2.11.0"
 okhttp = "4.12.0"
@@ -43,6 +44,10 @@ androidx-compose-material-icons-extended = { group = "androidx.compose.material"
 androidx-media3-exoplayer = { group = "androidx.media3", name = "media3-exoplayer", version.ref = "media3" }
 androidx-media3-session = { group = "androidx.media3", name = "media3-session", version.ref = "media3" }
 androidx-media3-ui = { group = "androidx.media3", name = "media3-ui", version.ref = "media3" }
+# Only needed for androidx.media.app.NotificationCompat.MediaStyle, to bridge the
+# playback notification to the Media3 MediaSession's getSessionCompatToken(). Media3
+# pulls this in transitively but doesn't expose it on the compile classpath.
+androidx-media = { group = "androidx.media", name = "media", version.ref = "media" }
 
 # Room
 androidx-room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }

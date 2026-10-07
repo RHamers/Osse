@@ -3,6 +3,7 @@ package com.rhamers.osse.player
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -21,6 +22,7 @@ import android.util.Log
 import android.view.KeyEvent
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import androidx.media.app.NotificationCompat.MediaStyle
 import androidx.media3.common.Player
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
@@ -203,17 +205,26 @@ class MultiTrackService : MediaSessionService() {
         }
 
     private fun handleMediaButtonKeyEvent(event: KeyEvent): Boolean {
-        if (event.keyCode != KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE &&
-            event.keyCode != KeyEvent.KEYCODE_HEADSETHOOK
-        ) {
-            return false
+        // Only react to the initial press; ignore key-up and long-press auto-repeat, but still
+        // claim the event so the default handling doesn't also act on it.
+        val isInitialPress = event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0
+        return when (event.keyCode) {
+            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_HEADSETHOOK -> {
+                if (isInitialPress) {
+                    lastMediaButtonEventAtMs = SystemClock.elapsedRealtime()
+                    onLogicalPlayPausePress()
+                }
+                true
+            }
+            // Dedicated skip-forward action (the notification's +30s button, and any remote
+            // that sends this keycode directly) -- always a plain 30s seek, independent of the
+            // play/pause double-press logic above.
+            KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
+                if (isInitialPress) tracks[TrackId.PODCAST]?.forward()
+                true
+            }
+            else -> false
         }
-        // Only react to the initial press; ignore key-up and long-press auto-repeat.
-        if (event.action != KeyEvent.ACTION_DOWN || event.repeatCount != 0) return true
-
-        lastMediaButtonEventAtMs = SystemClock.elapsedRealtime()
-        onLogicalPlayPausePress()
-        return true
     }
 
     private fun onLogicalPlayPausePress() {
@@ -287,13 +298,48 @@ class MultiTrackService : MediaSessionService() {
             )
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
+        val track = activeNotificationTrack(tracks[TrackId.PODCAST], tracks[TrackId.MUSIC])
+        val isPlaying = track?.player?.playWhenReady == true
+        val playPauseAction = NotificationCompat.Action(
+            if (isPlaying) R.drawable.ic_media_pause else R.drawable.ic_media_play,
+            if (isPlaying) "Pause" else "Play",
+            mediaButtonPendingIntent(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE),
+        )
+        val forwardAction = NotificationCompat.Action(
+            R.drawable.ic_media_forward_30,
+            "+30s",
+            mediaButtonPendingIntent(KeyEvent.KEYCODE_MEDIA_FAST_FORWARD),
+        )
         return NotificationCompat.Builder(this, PLAYBACK_NOTIFICATION_CHANNEL_ID)
-            .setContentTitle(getString(R.string.app_name))
-            .setContentText("Playing")
+            .setContentTitle(track?.state?.value?.title ?: getString(R.string.app_name))
+            .setContentText(if (track == null) "Ready" else if (isPlaying) "Playing" else "Paused")
             .setSmallIcon(R.drawable.ic_notification)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
+            .addAction(playPauseAction)
+            .addAction(forwardAction)
+            .setStyle(
+                MediaStyle()
+                    .setMediaSession(mediaSession?.sessionCompatToken)
+                    .setShowActionsInCompactView(0, 1)
+            )
             .build()
+    }
+
+    // Delivers a synthetic media-button KeyEvent to this same service, exactly the shape
+    // MediaButtonReceiver forwards a real earbud press in (ACTION_MEDIA_BUTTON + EXTRA_KEY_EVENT,
+    // see onStartCommand's kdoc) -- used for the notification's own play/pause and skip-forward
+    // buttons so they go through the identical handleMediaButtonKeyEvent() path a real button
+    // press does, rather than duplicating its logic.
+    private fun mediaButtonPendingIntent(keyCode: Int): PendingIntent {
+        val intent = Intent(Intent.ACTION_MEDIA_BUTTON, null, this, MultiTrackService::class.java)
+            .putExtra(Intent.EXTRA_KEY_EVENT, KeyEvent(KeyEvent.ACTION_DOWN, keyCode))
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            PendingIntent.getForegroundService(this, keyCode, intent, flags)
+        } else {
+            PendingIntent.getService(this, keyCode, intent, flags)
+        }
     }
 
     private fun toggleAllActiveTracks() {
@@ -387,6 +433,15 @@ class MultiTrackService : MediaSessionService() {
             pendingPressJob?.cancel()
             pendingPressJob = null
             lastMediaButtonEventAtMs = 0L
+            // A track left playing when a test ends calls startForeground() via the player
+            // listener in addTrack(); releasing the track above doesn't undo that. Left alone,
+            // isInForeground stays true into the next test (this binder/service is a singleton
+            // reused across the whole test class), which breaks any test that assumes a clean
+            // starting state.
+            if (isInForeground) {
+                stopForeground(Service.STOP_FOREGROUND_REMOVE)
+                isInForeground = false
+            }
         }
 
         fun simulateAudioFocusChange(focusChange: Int) {
@@ -419,6 +474,14 @@ class MultiTrackService : MediaSessionService() {
         fun restorePlaybackStateForTesting() = restorePlaybackState()
 
         fun sessionPlayerForTesting(): Player? = mediaSession?.player
+
+        fun simulateMediaButtonFastForward() {
+            handleMediaButtonKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD))
+        }
+
+        fun buildNotificationForTesting(): Notification = buildPlaybackNotification()
+
+        fun isInForegroundForTesting(): Boolean = isInForeground
     }
 
     private val binder = LocalBinder()
@@ -462,6 +525,33 @@ class MultiTrackService : MediaSessionService() {
         binder.addTrack(TrackId.MUSIC)
         restorePlaybackState()
         startPeriodicPlaybackFlush()
+    }
+
+    // MediaSessionService's own onStartCommand (invoked via super, below) parses an incoming
+    // ACTION_MEDIA_BUTTON intent and dispatches it to mediaButtonCallback -- that's the existing
+    // earbud-press path and is untouched here. This override exists only to satisfy a separate
+    // OS requirement: MediaButtonReceiver cold-starts a killed process via startForegroundService()
+    // for exactly this intent shape (confirmed: it only touches the component via setComponent(),
+    // the action stays ACTION_MEDIA_BUTTON), and API 31+ kills the process with
+    // ForegroundServiceDidNotStartInTimeException if startForeground() isn't called within a few
+    // seconds of that -- regardless of whether restorePlaybackState() found anything to resume.
+    // A normal launch (MainActivity's plain startService()) carries no such requirement and
+    // doesn't match this intent shape, so it's unaffected.
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val result = super.onStartCommand(intent, flags, startId)
+        if (intent?.action == Intent.ACTION_MEDIA_BUTTON && !isInForeground) {
+            startForeground(PLAYBACK_NOTIFICATION_ID, buildPlaybackNotification())
+            isInForeground = true
+            // The button press just dispatched above may only resolve into a play() after the
+            // double-press window elapses (onLogicalPlayPausePress's delayed toggle). Reconcile
+            // once that settles so a cold start that ultimately has nothing to play doesn't
+            // leave this notification stuck up forever.
+            serviceScope.launch {
+                delay(DOUBLE_PRESS_WINDOW_MS + 100)
+                updateForegroundState()
+            }
+        }
+        return result
     }
 
     // Reloads each track's persisted source/title/position from `playback_state` so
@@ -691,4 +781,17 @@ internal fun anyTrackRequiresForeground(tracks: Collection<TrackPlayer>): Boolea
     tracks.any { track ->
         track.player.playWhenReady &&
             (track.player.playbackState == Player.STATE_READY || track.player.playbackState == Player.STATE_BUFFERING)
+    }
+
+// Picks whichever track the single playback notification should describe: whichever is
+// actually playing (podcast wins when both are, matching updateMediaSessionPlayer()'s own
+// precedence), falling back to whichever has a loaded source so a paused/restored-but-not-yet-
+// resumed track still shows its title instead of silently preferring an empty slot.
+internal fun activeNotificationTrack(podcast: TrackPlayer?, music: TrackPlayer?): TrackPlayer? =
+    when {
+        podcast?.player?.playWhenReady == true -> podcast
+        music?.player?.playWhenReady == true -> music
+        podcast?.state?.value?.source != null -> podcast
+        music?.state?.value?.source != null -> music
+        else -> null
     }

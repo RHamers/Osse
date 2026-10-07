@@ -1,5 +1,6 @@
 package com.rhamers.osse.player
 
+import android.app.Notification
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -7,6 +8,7 @@ import android.content.ServiceConnection
 import android.media.AudioManager
 import android.net.Uri
 import android.os.IBinder
+import android.view.KeyEvent
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -424,6 +426,135 @@ class MultiTrackServiceTest {
         assertEquals(40_000L, podcastPosition)
         assertTrue("podcast should keep playing, only its position should change", podcastPlaying)
         assertTrue("music should be unaffected by a double press", musicPlaying)
+    }
+
+    @Test
+    fun fastForwardKeyEventSeeksPodcastForward30SecondsWithoutTogglingPlayback() {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).apply {
+                setSource(AudioSource.RssFeed("https://example.com/ep.mp3"))
+                play()
+                seekTo(10_000L)
+            }
+            binder.addTrack(TrackId.MUSIC).apply {
+                setSource(AudioSource.RssFeed("https://example.com/music.mp3"))
+                play()
+            }
+            binder.simulateMediaButtonFastForward()
+        }
+        var podcastPosition = 0L
+        var podcastPlaying = false
+        var musicPlaying = false
+        instrumentation.runOnMainSync {
+            podcastPosition = binder.getTrack(TrackId.PODCAST)!!.state.value.positionMs
+            podcastPlaying = binder.getTrack(TrackId.PODCAST)!!.player.playWhenReady
+            musicPlaying = binder.getTrack(TrackId.MUSIC)!!.player.playWhenReady
+        }
+        assertEquals(40_000L, podcastPosition)
+        assertTrue("podcast should keep playing, only its position should change", podcastPlaying)
+        assertTrue("music should be unaffected by the notification's skip-forward action", musicPlaying)
+    }
+
+    @Test
+    fun fastForwardKeyEventIsNoOpWhenNoPodcastTrackLoaded() {
+        // Guards against a crash if the notification's skip-forward action fires after
+        // clearTracksForTesting() wipes the tracks map (or, in production, before onCreate's
+        // addTrack(PODCAST) has run). runOnMainSync propagates any exception as a test failure.
+        instrumentation.runOnMainSync { binder.simulateMediaButtonFastForward() }
+    }
+
+    @Test
+    fun notificationShowsReadyWithAppNameWhenNoTrackIsActive() {
+        lateinit var notification: Notification
+        instrumentation.runOnMainSync { notification = binder.buildNotificationForTesting() }
+        assertEquals("Osse", notification.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
+        assertEquals("Ready", notification.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
+    }
+
+    @Test
+    fun notificationShowsActiveTrackTitleAndPlayingState() {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).apply {
+                setSource(AudioSource.RssFeed("https://example.com/ep.mp3"), "Episode 42")
+                play()
+            }
+        }
+        lateinit var notification: Notification
+        instrumentation.runOnMainSync { notification = binder.buildNotificationForTesting() }
+        assertEquals("Episode 42", notification.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
+        assertEquals("Playing", notification.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
+    }
+
+    @Test
+    fun notificationShowsPausedStateForALoadedButPausedTrack() {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST)
+                .setSource(AudioSource.RssFeed("https://example.com/ep.mp3"), "Episode 42")
+        }
+        lateinit var notification: Notification
+        instrumentation.runOnMainSync { notification = binder.buildNotificationForTesting() }
+        assertEquals("Paused", notification.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
+    }
+
+    @Test
+    fun notificationHasPlayPauseAndSkipForwardActions() {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).apply {
+                setSource(AudioSource.RssFeed("https://example.com/ep.mp3"), "Episode 42")
+                play()
+            }
+        }
+        lateinit var notification: Notification
+        instrumentation.runOnMainSync { notification = binder.buildNotificationForTesting() }
+        assertEquals(2, notification.actions.size)
+        assertEquals("Pause", notification.actions[0].title.toString())
+        assertEquals("+30s", notification.actions[1].title.toString())
+    }
+
+    @Test
+    fun clearTracksForTestingDropsAForegroundServiceLeftByAPlayingTrack() {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).apply {
+                setSource(AudioSource.RssFeed("https://example.com/ep.mp3"))
+                play()
+            }
+        }
+        assertTrue(
+            "test setup: playing a track must enter foreground",
+            waitUntilInForeground(true, timeoutMs = 2_000),
+        )
+        instrumentation.runOnMainSync { binder.clearTracksForTesting() }
+        assertFalse(
+            "clearTracksForTesting must leave the service out of foreground, or it poisons " +
+                "every later test in this class that assumes a clean starting state",
+            binder.isInForegroundForTesting(),
+        )
+    }
+
+    @Test
+    fun coldStartViaMediaButtonCallsStartForegroundEvenWithNothingToResume() {
+        // clearTracks() in @Before already wiped the tracks map and the DB, simulating a
+        // process wake with nothing restorable to play. A real MediaButtonReceiver cold
+        // start forwards the original ACTION_MEDIA_BUTTON intent (action untouched, just
+        // re-targeted) to this service via startForegroundService() -- see
+        // MultiTrackService.onStartCommand's kdoc for why that specifically requires a
+        // prompt startForeground() call regardless of whether anything ends up playing.
+        val ctx = ApplicationProvider.getApplicationContext<Context>()
+        val keyEvent = KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
+        val intent = Intent(Intent.ACTION_MEDIA_BUTTON)
+            .setClass(ctx, MultiTrackService::class.java)
+            .putExtra(Intent.EXTRA_KEY_EVENT, keyEvent)
+        ctx.startService(intent)
+
+        assertTrue(
+            "startForeground must be called within the OS timeout for a " +
+                "MediaButtonReceiver-style cold start",
+            waitUntilInForeground(true, timeoutMs = 2_000),
+        )
+        assertTrue(
+            "must reconcile back out of foreground once settling finds nothing playing",
+            waitUntilInForeground(false, timeoutMs = 3_000),
+        )
     }
 
     @Test
@@ -905,6 +1036,17 @@ class MultiTrackServiceTest {
             }
             if (!playWhenReady) return true
             Thread.sleep(50)
+        }
+        return false
+    }
+
+    private fun waitUntilInForeground(expected: Boolean, timeoutMs: Long): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            var inForeground = false
+            instrumentation.runOnMainSync { inForeground = binder.isInForegroundForTesting() }
+            if (inForeground == expected) return true
+            Thread.sleep(100)
         }
         return false
     }
