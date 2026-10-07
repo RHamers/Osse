@@ -77,11 +77,42 @@ abstract class OsseDatabase : RoomDatabase() {
 
         @Volatile private var instance: OsseDatabase? = null
 
+        // Test-only seam: instrumented tests bind the real MultiTrackService in-process
+        // against the real app's context, so without this override their clearAllTables()
+        // calls (and the service's own normal read/writes) land on whatever device is
+        // connected — including a real personal device — wiping its actual podcast
+        // subscriptions and playback state. Call useIsolatedTestDatabase() before anything
+        // calls get() for the first time in the process (the service's onCreate() is
+        // typically that first call), since the singleton below is cached after creation.
+        @Volatile private var testDatabaseName: String? = null
+
+        // Guarded so multiple androidTest classes' @BeforeClass can call this in any order,
+        // whether or not they share a single instrumentation process: only the first caller
+        // (before the singleton exists) sets the override and resets the file, so a second
+        // call never deletes a database Room may already have open.
+        fun useIsolatedTestDatabase(context: Context, name: String = "osse_instrumented_test.db") {
+            synchronized(this) {
+                if (instance == null) {
+                    testDatabaseName = name
+                    context.applicationContext.deleteDatabase(name)
+                }
+            }
+        }
+
+        // Test-only: clears the cached singleton and override so each test starts clean.
+        fun resetForTesting() {
+            synchronized(this) {
+                instance?.close()
+                instance = null
+                testDatabaseName = null
+            }
+        }
+
         fun get(context: Context): OsseDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext,
                 OsseDatabase::class.java,
-                "osse.db"
+                testDatabaseName ?: "osse.db"
             )
                 .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                 .build()

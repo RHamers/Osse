@@ -19,6 +19,7 @@ import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.rhamers.osse.data.db.OsseDatabase
 import com.rhamers.osse.model.AudioSource
 import com.rhamers.osse.model.TrackId
 import com.rhamers.osse.player.FakeYoutubeCacheManager
@@ -50,6 +51,11 @@ class TrackScreenTest {
         fun bindService() {
             val latch = CountDownLatch(1)
             val ctx = ApplicationProvider.getApplicationContext<Context>()
+            // Must happen before bindService() below triggers MultiTrackService.onCreate()
+            // (the first OsseDatabase.get() call), otherwise this suite's real-service
+            // read/writes land on the device's production database instead of an isolated
+            // one. See MultiTrackServiceTest for the same guard.
+            OsseDatabase.useIsolatedTestDatabase(ctx)
             val connection = object : ServiceConnection {
                 override fun onServiceConnected(name: ComponentName, service: IBinder) {
                     binder = service as MultiTrackService.LocalBinder

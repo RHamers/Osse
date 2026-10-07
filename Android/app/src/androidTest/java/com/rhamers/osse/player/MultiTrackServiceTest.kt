@@ -43,6 +43,10 @@ class MultiTrackServiceTest {
         fun bindService() {
             val latch = CountDownLatch(1)
             val ctx = ApplicationProvider.getApplicationContext<Context>()
+            // Must happen before bindService() below triggers MultiTrackService.onCreate()
+            // (the first OsseDatabase.get() call), otherwise this suite's clearAllTables()
+            // calls wipe the real device's production database instead of an isolated one.
+            OsseDatabase.useIsolatedTestDatabase(ctx)
             val connection = object : ServiceConnection {
                 override fun onServiceConnected(name: ComponentName, service: IBinder) {
                     binder = service as MultiTrackService.LocalBinder
@@ -81,7 +85,7 @@ class MultiTrackServiceTest {
         val ctx = ApplicationProvider.getApplicationContext<Context>()
         val name = ctx.startService(Intent(ctx, MultiTrackService::class.java))
         assertNotNull("startService() must succeed for background audio to work", name)
-        assertEquals("com.rhamers.osse", name!!.packageName)
+        assertEquals(ctx.packageName, name!!.packageName)
     }
 
     @Test
