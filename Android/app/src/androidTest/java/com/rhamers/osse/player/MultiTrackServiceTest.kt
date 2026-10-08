@@ -456,6 +456,38 @@ class MultiTrackServiceTest {
     }
 
     @Test
+    fun mediaNextKeyEventSeeksPodcastForward30SecondsWithoutTogglingPlayback() {
+        // Some earbuds (confirmed on-device: a real Pixel-10a-paired set) detect a physical
+        // double-tap gesture in firmware and report it to Android as a single
+        // KEYCODE_MEDIA_NEXT, never as two separate play/pause presses -- so the double-press
+        // detection in onLogicalPlayPausePress never gets a chance to run for that hardware.
+        // This is a second, independent route to the same 30s skip, not a replacement.
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).apply {
+                setSource(AudioSource.RssFeed("https://example.com/ep.mp3"))
+                play()
+                seekTo(10_000L)
+            }
+            binder.addTrack(TrackId.MUSIC).apply {
+                setSource(AudioSource.RssFeed("https://example.com/music.mp3"))
+                play()
+            }
+            binder.simulateMediaButtonNext()
+        }
+        var podcastPosition = 0L
+        var podcastPlaying = false
+        var musicPlaying = false
+        instrumentation.runOnMainSync {
+            podcastPosition = binder.getTrack(TrackId.PODCAST)!!.state.value.positionMs
+            podcastPlaying = binder.getTrack(TrackId.PODCAST)!!.player.playWhenReady
+            musicPlaying = binder.getTrack(TrackId.MUSIC)!!.player.playWhenReady
+        }
+        assertEquals(40_000L, podcastPosition)
+        assertTrue("podcast should keep playing, only its position should change", podcastPlaying)
+        assertTrue("music should be unaffected by a KEYCODE_MEDIA_NEXT press", musicPlaying)
+    }
+
+    @Test
     fun fastForwardKeyEventIsNoOpWhenNoPodcastTrackLoaded() {
         // Guards against a crash if the notification's skip-forward action fires after
         // clearTracksForTesting() wipes the tracks map (or, in production, before onCreate's

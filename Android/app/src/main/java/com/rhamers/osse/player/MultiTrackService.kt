@@ -219,7 +219,17 @@ class MultiTrackService : MediaSessionService() {
             // Dedicated skip-forward action (the notification's +30s button, and any remote
             // that sends this keycode directly) -- always a plain 30s seek, independent of the
             // play/pause double-press logic above.
-            KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
+            //
+            // KEYCODE_MEDIA_NEXT is a second, independent route to the exact same action:
+            // confirmed on-device (logcat) that a real earbud's double-tap gesture is detected
+            // in the earbud's own firmware and reported to Android as a single
+            // KEYCODE_MEDIA_NEXT, never as two separate play/pause presses -- so for that
+            // hardware, onLogicalPlayPausePress's double-press window never gets a chance to
+            // run; there's no second press for it to see. Handling both keeps the play/pause
+            // double-press path intact for whatever hardware it originally targeted (e.g. a
+            // wired remote that genuinely sends two HEADSETHOOK clicks) while also covering
+            // earbuds that do their own gesture detection and emit NEXT instead.
+            KeyEvent.KEYCODE_MEDIA_FAST_FORWARD, KeyEvent.KEYCODE_MEDIA_NEXT -> {
                 if (isInitialPress) tracks[TrackId.PODCAST]?.forward()
                 true
             }
@@ -477,6 +487,10 @@ class MultiTrackService : MediaSessionService() {
 
         fun simulateMediaButtonFastForward() {
             handleMediaButtonKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD))
+        }
+
+        fun simulateMediaButtonNext() {
+            handleMediaButtonKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_NEXT))
         }
 
         fun buildNotificationForTesting(): Notification = buildPlaybackNotification()
