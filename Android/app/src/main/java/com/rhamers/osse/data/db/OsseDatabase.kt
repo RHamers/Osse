@@ -9,7 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [PodcastEntity::class, EpisodeEntity::class, QueueItemEntity::class, YoutubeCacheEntity::class, PlaybackStateEntity::class],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 abstract class OsseDatabase : RoomDatabase() {
@@ -20,6 +20,13 @@ abstract class OsseDatabase : RoomDatabase() {
     abstract fun playbackStateDao(): PlaybackStateDao
 
     companion object {
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE playback_state ADD COLUMN volume REAL NOT NULL DEFAULT 1.0")
+                db.execSQL("ALTER TABLE playback_state ADD COLUMN speed REAL NOT NULL DEFAULT 1.0")
+            }
+        }
+
         val MIGRATION_5_6 = object : Migration(5, 6) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
@@ -114,7 +121,7 @@ abstract class OsseDatabase : RoomDatabase() {
                 OsseDatabase::class.java,
                 testDatabaseName ?: "osse.db"
             )
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
                 .build()
                 .also { instance = it }
         }

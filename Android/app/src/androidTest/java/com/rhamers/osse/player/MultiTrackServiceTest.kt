@@ -564,6 +564,33 @@ class MultiTrackServiceTest {
     }
 
     @Test
+    fun onTaskRemovedDoesNotStopServiceWhilePlaybackIsOngoing() {
+        // Media3's own default onTaskRemoved() decides whether to stop the service by
+        // checking its internal MediaNotificationManager's isStartedInForeground() flag --
+        // but this service bypasses that manager entirely (see updateForegroundState()'s own
+        // kdoc), so that flag is always false regardless of what's actually playing. Without
+        // the override under test, this call would incorrectly stopSelf() the shared service
+        // instance this whole test class depends on, poisoning every later test -- so this is
+        // deliberately the one scenario in this class that must NOT tear the service down.
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).apply {
+                setSource(AudioSource.RssFeed("https://example.com/ep.mp3"))
+                play()
+            }
+        }
+        assertTrue(
+            "test setup: playing a track must enter foreground",
+            waitUntilInForeground(true, timeoutMs = 2_000),
+        )
+        instrumentation.runOnMainSync { binder.simulateTaskRemoved() }
+        var podcastPlaying = false
+        instrumentation.runOnMainSync {
+            podcastPlaying = binder.getTrack(TrackId.PODCAST)?.player?.playWhenReady == true
+        }
+        assertTrue("service must not be stopped while a track is actively playing", podcastPlaying)
+    }
+
+    @Test
     fun coldStartViaMediaButtonCallsStartForegroundEvenWithNothingToResume() {
         // clearTracks() in @Before already wiped the tracks map and the DB, simulating a
         // process wake with nothing restorable to play. A real MediaButtonReceiver cold
@@ -766,6 +793,8 @@ class MultiTrackServiceTest {
             binder.addTrack(TrackId.PODCAST).apply {
                 setSource(AudioSource.RssFeed("https://example.com/ep.mp3"), "Episode 1")
                 seekTo(5_000L)
+                setVolume(0.4f)
+                setSpeed(1.75f)
             }
         }
         Thread.sleep(2_500) // > 2s debounce window
@@ -775,6 +804,8 @@ class MultiTrackServiceTest {
         assertEquals("https://example.com/ep.mp3", row.sourceRef)
         assertEquals("Episode 1", row.title)
         assertEquals(5_000L, row.positionMs)
+        assertEquals(0.4f, row.volume, 0.001f)
+        assertEquals(1.75f, row.speed, 0.001f)
     }
 
     @Test
@@ -890,7 +921,11 @@ class MultiTrackServiceTest {
     }
 
     @Test
-    fun restoringPodcastTrackAppliesThePodcastsDefaultSpeed() {
+    fun restoringPlaybackStateReloadsVolumeAndSpeedForBothTracks() {
+        // The podcast's own configured defaultSpeed (1.5f here) must NOT win over a live,
+        // persisted value from the actual last session (0.4f/1.75f) -- restoring after a kill
+        // should bring back exactly what the user had set, not reset to the podcast's default.
+        // The per-podcast default still applies elsewhere (starting a NEW episode), just not here.
         val db = OsseDatabase.get(ApplicationProvider.getApplicationContext())
         runBlocking {
             db.podcastDao().upsert(
@@ -906,15 +941,28 @@ class MultiTrackServiceTest {
                 PlaybackStateEntity(
                     trackId = "PODCAST", sourceType = "RSS_FEED",
                     sourceRef = "https://example.com/ep1.mp3", title = "Episode 1",
-                    positionMs = 0L, updatedAt = 0L,
+                    positionMs = 0L, updatedAt = 0L, volume = 0.4f, speed = 1.75f,
+                )
+            )
+            db.playbackStateDao().upsert(
+                PlaybackStateEntity(
+                    trackId = "MUSIC", sourceType = "RSS_FEED",
+                    sourceRef = "https://example.com/music.mp3", title = "Music",
+                    positionMs = 0L, updatedAt = 0L, volume = 0.6f, speed = 1.25f,
                 )
             )
         }
         instrumentation.runOnMainSync {
             binder.addTrack(TrackId.PODCAST)
+            binder.addTrack(TrackId.MUSIC)
             binder.restorePlaybackStateForTesting()
         }
-        assertEquals(1.5f, binder.getTrack(TrackId.PODCAST)!!.state.value.speed, 0.001f)
+        val podcastState = binder.getTrack(TrackId.PODCAST)!!.state.value
+        val musicState = binder.getTrack(TrackId.MUSIC)!!.state.value
+        assertEquals(0.4f, podcastState.volume, 0.001f)
+        assertEquals(1.75f, podcastState.speed, 0.001f)
+        assertEquals(0.6f, musicState.volume, 0.001f)
+        assertEquals(1.25f, musicState.speed, 0.001f)
     }
 
     // Fix 3 (final review): of the three AudioSource branches restorePlaybackState() handles,

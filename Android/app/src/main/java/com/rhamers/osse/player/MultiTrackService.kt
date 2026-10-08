@@ -299,6 +299,19 @@ class MultiTrackService : MediaSessionService() {
         }
     }
 
+    // MediaSessionService's own default onTaskRemoved() (called when the user swipes this
+    // app's task away in Recents) decides whether to stopSelf() by checking
+    // getMediaNotificationManager().isStartedInForeground() -- but this service bypasses that
+    // manager entirely (see updateForegroundState() above), so that flag is always false
+    // regardless of whether anything is actually playing. Confirmed on-device: the default
+    // implementation stops this service on every single Recents swipe, killing live playback.
+    // Use the same anyTrackRequiresForeground() check updateForegroundState() already uses.
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        if (!anyTrackRequiresForeground(tracks.values)) {
+            stopSelf()
+        }
+    }
+
     private fun buildPlaybackNotification(): Notification {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
@@ -493,6 +506,8 @@ class MultiTrackService : MediaSessionService() {
             handleMediaButtonKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_NEXT))
         }
 
+        fun simulateTaskRemoved() = onTaskRemoved(null)
+
         fun buildNotificationForTesting(): Notification = buildPlaybackNotification()
 
         fun isInForegroundForTesting(): Boolean = isInForeground
@@ -581,7 +596,8 @@ class MultiTrackService : MediaSessionService() {
             val source: AudioSource,
             val title: String?,
             val positionMs: Long,
-            val speed: Float?,
+            val volume: Float,
+            val speed: Float,
         )
 
         val toRestore = try {
@@ -609,15 +625,7 @@ class MultiTrackService : MediaSessionService() {
                         }
                     }
                     source ?: return@mapNotNull null
-                    val speed = if (trackId == TrackId.PODCAST && source is AudioSource.RssFeed) {
-                        db.episodeDao().getByEnclosureUrl(source.enclosureUrl)
-                            ?.podcastFeedUrl
-                            ?.let { db.podcastDao().getByUrl(it) }
-                            ?.defaultSpeed
-                    } else {
-                        null
-                    }
-                    Restored(trackId, source, row.title, row.positionMs, speed)
+                    Restored(trackId, source, row.title, row.positionMs, row.volume, row.speed)
                 }
             }
         } catch (e: Exception) {
@@ -634,7 +642,8 @@ class MultiTrackService : MediaSessionService() {
             // requested.
             track.setSource(r.source, r.title, prepare = false)
             track.seekTo(r.positionMs)
-            r.speed?.let { track.setSpeed(it) }
+            track.setVolume(r.volume)
+            track.setSpeed(r.speed)
         }
     }
 
@@ -661,7 +670,8 @@ class MultiTrackService : MediaSessionService() {
                     TrackId.entries.forEach { trackId ->
                         val state = tracks[trackId]?.state?.value ?: return@forEach
                         if (state.isPlaying) {
-                            persistState(db, trackId, state.source, state.title, state.positionMs)
+                            persistState(db, trackId, state.source, state.title, state.positionMs,
+                                state.volume, state.speed)
                         }
                     }
                 } catch (e: Exception) {
@@ -673,12 +683,19 @@ class MultiTrackService : MediaSessionService() {
 
     private fun startPlaybackStatePersistence(trackId: TrackId, player: TrackPlayer) {
         val db = OsseDatabase.get(this)
+        data class Snapshot(
+            val source: AudioSource?,
+            val title: String?,
+            val positionMs: Long,
+            val volume: Float,
+            val speed: Float,
+        )
         persistenceJobs[trackId] = serviceScope.launch {
             player.state
-                .map { Triple(it.source, it.title, it.positionMs) }
+                .map { Snapshot(it.source, it.title, it.positionMs, it.volume, it.speed) }
                 .distinctUntilChanged()
                 .debounce(2_000)
-                .collect { (source, title, positionMs) -> persistState(db, trackId, source, title, positionMs) }
+                .collect { persistState(db, trackId, it.source, it.title, it.positionMs, it.volume, it.speed) }
         }
     }
 
@@ -688,6 +705,8 @@ class MultiTrackService : MediaSessionService() {
         source: AudioSource?,
         title: String?,
         positionMs: Long,
+        volume: Float,
+        speed: Float,
     ) {
         withContext(Dispatchers.IO) {
             val ref = source?.toPlaybackRef()
@@ -713,6 +732,8 @@ class MultiTrackService : MediaSessionService() {
                         title = title,
                         positionMs = positionMs,
                         updatedAt = System.currentTimeMillis(),
+                        volume = volume,
+                        speed = speed,
                     )
                 )
             }

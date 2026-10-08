@@ -11,4 +11,6 @@ data class PlaybackStateEntity(
     val title: String?,
     val positionMs: Long,
     val updatedAt: Long,
+    val volume: Float = 1.0f,
+    val speed: Float = 1.0f,
 )
