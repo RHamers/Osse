@@ -30,6 +30,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -834,17 +835,24 @@ class MultiTrackServiceTest {
     }
 
     @Test
-    fun youtubeStreamSourceIsNotPersisted() {
+    fun youtubeStreamSourcePersistsItsDurableVideoIdNotTheEphemeralCdnUrl() {
+        // A still-streaming (not yet cached) YouTube track now persists its durable videoId,
+        // not its ephemeral CDN URL -- see AudioSource.toPlaybackRef()'s kdoc. This is what
+        // lets restorePlaybackState() re-resolve a fresh stream after a kill that happens
+        // before the background download finishes, instead of losing the track outright.
         val db = OsseDatabase.get(ApplicationProvider.getApplicationContext())
         instrumentation.runOnMainSync {
             binder.addTrack(TrackId.MUSIC).apply {
-                setSource(AudioSource.YoutubeStream("https://youtube.com/watch?v=abc"))
+                setSource(AudioSource.YoutubeStream("https://youtube.com/watch?v=abc", videoId = "abc"))
                 seekTo(3_000L)
             }
         }
         Thread.sleep(2_500)
         val row = runBlocking { db.playbackStateDao().getByTrackId("MUSIC") }
-        assertNull("an ephemeral YouTube CDN stream URL must never be persisted", row)
+        assertNotNull("expected a persisted row keyed by the video's durable id", row)
+        assertEquals("YOUTUBE", row!!.sourceType)
+        assertEquals("abc", row.sourceRef)
+        assertEquals(3_000L, row.positionMs)
     }
 
     // Regression test for the plan-level gap flagged in review: TrackPlayer emits a fresh
@@ -1062,23 +1070,88 @@ class MultiTrackServiceTest {
     }
 
     @Test
-    fun restoringYoutubeTrackNotInCacheLeavesItSourcelessAndClearsStaleRow() {
+    fun restoringYoutubeTrackNotInCacheReResolvesThroughCacheManager() {
+        // Covers the bug this guards against: a kill before the background download finishes
+        // used to leave this track sourceless forever, since the ephemeral CDN URL was never
+        // persisted. The durable videoId now is, so restore can get a fresh (or cached) source
+        // back through the cache manager instead of giving up.
         val db = OsseDatabase.get(ApplicationProvider.getApplicationContext())
         runBlocking {
             db.playbackStateDao().upsert(
                 PlaybackStateEntity(
                     trackId = "MUSIC", sourceType = "YOUTUBE",
-                    sourceRef = "missingVideoId", title = "Gone", positionMs = 0L, updatedAt = 0L,
+                    sourceRef = "freshVideoId", title = "Still Streaming", positionMs = 5_000L, updatedAt = 0L,
+                )
+            )
+        }
+        val freshSource = AudioSource.YoutubeStream("https://fresh.example.com/audio", videoId = "freshVideoId")
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.MUSIC)
+            binder.setCacheManagerForTesting(FakeYoutubeCacheManager(resolveResult = Result.success(freshSource)))
+            binder.restorePlaybackStateForTesting()
+        }
+        val state = binder.getTrack(TrackId.MUSIC)!!.state.value
+        assertEquals(freshSource, state.source)
+        assertEquals(5_000L, state.positionMs)
+    }
+
+    @Test
+    fun restoringYoutubeTrackLeavesItSourcelessAndClearsStaleRowWhenReResolveFails() {
+        val db = OsseDatabase.get(ApplicationProvider.getApplicationContext())
+        runBlocking {
+            db.playbackStateDao().upsert(
+                PlaybackStateEntity(
+                    trackId = "MUSIC", sourceType = "YOUTUBE",
+                    sourceRef = "deadVideoId", title = "Gone", positionMs = 0L, updatedAt = 0L,
                 )
             )
         }
         instrumentation.runOnMainSync {
             binder.addTrack(TrackId.MUSIC)
+            binder.setCacheManagerForTesting(
+                FakeYoutubeCacheManager(resolveResult = Result.failure(IOException("video gone")))
+            )
             binder.restorePlaybackStateForTesting()
         }
         assertNull(binder.getTrack(TrackId.MUSIC)!!.state.value.source)
         val row = runBlocking { db.playbackStateDao().getByTrackId("MUSIC") }
-        assertNull("stale playback_state row must be cleared when the cache entry is gone", row)
+        assertNull("stale playback_state row must be cleared when re-resolving fails", row)
+    }
+
+    @Test
+    fun restoringPlaybackStateContinuesOtherTracksWhenOneYoutubeReResolveFails() {
+        // Regression guard: restorePlaybackState()'s mapNotNull loop now makes a live
+        // re-resolve call per YouTube entry. Without a per-item try/catch, one throwing
+        // (e.g. a dead video) would propagate to the single outer try/catch around the whole
+        // loop and silently drop every OTHER track's restore too.
+        val db = OsseDatabase.get(ApplicationProvider.getApplicationContext())
+        runBlocking {
+            db.playbackStateDao().upsert(
+                PlaybackStateEntity(
+                    trackId = "PODCAST", sourceType = "RSS_FEED",
+                    sourceRef = "https://example.com/ep.mp3", title = "Episode", positionMs = 1_000L, updatedAt = 0L,
+                )
+            )
+            db.playbackStateDao().upsert(
+                PlaybackStateEntity(
+                    trackId = "MUSIC", sourceType = "YOUTUBE",
+                    sourceRef = "deadVideoId", title = "Gone", positionMs = 0L, updatedAt = 0L,
+                )
+            )
+        }
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST)
+            binder.addTrack(TrackId.MUSIC)
+            binder.setCacheManagerForTesting(
+                FakeYoutubeCacheManager(resolveResult = Result.failure(IOException("video gone")))
+            )
+            binder.restorePlaybackStateForTesting()
+        }
+        assertEquals(
+            AudioSource.RssFeed("https://example.com/ep.mp3"),
+            binder.getTrack(TrackId.PODCAST)!!.state.value.source,
+        )
+        assertNull(binder.getTrack(TrackId.MUSIC)!!.state.value.source)
     }
 
     private fun waitUntilPlaying(id: TrackId, timeoutMs: Long): Boolean {

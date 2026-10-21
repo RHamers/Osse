@@ -56,7 +56,7 @@ class DefaultYoutubeCacheManager(
                 inFlightMutex.withLock { inFlight.remove(videoId) }
             }
         }
-        return AudioSource.YoutubeStream(streamUrl)
+        return AudioSource.YoutubeStream(streamUrl, videoId)
     }
 
     override suspend fun downloadAndCache(

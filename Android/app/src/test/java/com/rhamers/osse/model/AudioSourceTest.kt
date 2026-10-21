@@ -2,7 +2,6 @@ package com.rhamers.osse.model
 
 import android.net.Uri
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -93,8 +92,10 @@ class AudioSourceTest {
     }
 
     @Test
-    fun toPlaybackRef_youtubeStreamReturnsNull() {
-        val source = AudioSource.YoutubeStream("https://rr.googlevideo.com/expiring-url")
-        assertNull(source.toPlaybackRef())
+    fun toPlaybackRef_youtubeStreamUsesVideoIdAsRef() {
+        val source = AudioSource.YoutubeStream(
+            "https://rr.googlevideo.com/expiring-url", videoId = "dQw4w9WgXcQ"
+        )
+        assertEquals("YOUTUBE" to "dQw4w9WgXcQ", source.toPlaybackRef())
     }
 }

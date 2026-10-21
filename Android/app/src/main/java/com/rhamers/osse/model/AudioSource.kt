@@ -7,7 +7,7 @@ import java.io.File
 sealed class AudioSource {
     data class LocalFile(val uri: Uri) : AudioSource()
     data class RssFeed(val enclosureUrl: String) : AudioSource()
-    data class YoutubeStream(val youtubeUrl: String) : AudioSource()
+    data class YoutubeStream(val youtubeUrl: String, val videoId: String = "") : AudioSource()
     data class YoutubeDownloaded(val localPath: String) : AudioSource()
 }
 
@@ -35,11 +35,13 @@ object PlaybackSourceType {
 }
 
 // Maps a source to the (sourceType, sourceRef) pair persisted in `playback_state` for
-// process-death resume. Returns null for YoutubeStream: its CDN URL expires, so nothing
-// is written until the background download finishes and the source becomes YoutubeDownloaded.
+// process-death resume. YoutubeStream persists its durable videoId, not its ephemeral CDN
+// URL (which would already be dead by the time anything restores it) -- restorePlaybackState()
+// re-resolves a fresh stream (or finds the finished download) through YoutubeCacheManager
+// using that videoId, the same way it looks up an enclosure URL for an RssFeed.
 fun AudioSource.toPlaybackRef(): Pair<String, String>? = when (this) {
     is AudioSource.RssFeed           -> PlaybackSourceType.RSS_FEED to enclosureUrl
     is AudioSource.LocalFile         -> PlaybackSourceType.LOCAL_FILE to uri.toString()
     is AudioSource.YoutubeDownloaded -> PlaybackSourceType.YOUTUBE to File(localPath).nameWithoutExtension
-    is AudioSource.YoutubeStream     -> null
+    is AudioSource.YoutubeStream     -> PlaybackSourceType.YOUTUBE to videoId
 }

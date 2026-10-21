@@ -37,6 +37,7 @@ import com.rhamers.osse.model.toPlaybackRef
 import com.rhamers.osse.player.DefaultYoutubeCacheManager
 import com.rhamers.osse.youtube.NewPipeYoutubeExtractor
 import com.rhamers.osse.youtube.OkHttpNewPipeDownloader
+import com.rhamers.osse.youtube.YoutubeVideoMetadata
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -70,15 +71,6 @@ class MultiTrackService : MediaSessionService() {
     // Tracks which track IDs were playing when a transient focus loss occurred,
     // so we only resume those (not tracks the user had manually paused).
     private val pausedByFocusLoss = mutableSetOf<TrackId>()
-
-    // Tracks which track IDs have already had their stale playback_state row cleared for
-    // their current AudioSource.YoutubeStream source, so persistState() doesn't issue a
-    // redundant DELETE on every debounce/flush tick for the entire duration of a
-    // YoutubeStream's background download (there's nothing left to delete after the first
-    // tick). Cleared per-trackId whenever a persistable source is set, and reset entirely by
-    // clearTracksForTesting() so tests stay isolated.
-    private val youtubeStreamCleared: MutableSet<TrackId> =
-        java.util.Collections.synchronizedSet(mutableSetOf())
 
     // Holds the pending AudioFocusRequest on API 26+ so we can abandon it later.
     private var audioFocusRequestO: AudioFocusRequest? = null
@@ -378,6 +370,10 @@ class MultiTrackService : MediaSessionService() {
         val activeTrackIds: StateFlow<List<TrackId>> = _activeTrackIds.asStateFlow()
         val cacheManager: YoutubeCacheManager get() = this@MultiTrackService.cacheManager
 
+        fun setCacheManagerForTesting(manager: YoutubeCacheManager) {
+            this@MultiTrackService.cacheManager = manager
+        }
+
         fun getTrack(id: TrackId): TrackPlayer? = tracks[id]
 
         fun addTrack(id: TrackId): TrackPlayer {
@@ -446,7 +442,6 @@ class MultiTrackService : MediaSessionService() {
             tracks.clear()
             _activeTrackIds.value = emptyList()
             pausedByFocusLoss.clear()
-            youtubeStreamCleared.clear()
             // A pending double-press-window job (or the media-button-echo timestamp it's
             // paired with) is service-instance state, not per-track state, so it survives
             // the clears above. Left alone, a job scheduled by one test but not yet fired
@@ -609,11 +604,32 @@ class MultiTrackService : MediaSessionService() {
                         PlaybackSourceType.LOCAL_FILE -> AudioSource.LocalFile(Uri.parse(row.sourceRef))
                         PlaybackSourceType.YOUTUBE -> {
                             val cached = db.youtubeCacheDao().getById(row.sourceRef)
-                            if (cached == null) {
-                                db.playbackStateDao().delete(trackId.name)
-                                null
-                            } else {
+                            if (cached != null) {
                                 AudioSource.YoutubeDownloaded(cached.localPath)
+                            } else {
+                                // Not cached yet -- most likely killed before the background
+                                // download finished. Re-resolve through the cache manager
+                                // instead of giving up: this gets a fresh CDN stream (and
+                                // kicks off a new background download) or finds the cache if
+                                // it finished in the meantime. Caught locally, per item, so
+                                // one dead video (network failure, video taken down, etc.)
+                                // can't propagate out to the one big try/catch around this
+                                // whole mapNotNull loop and wipe out restoring every OTHER
+                                // track too.
+                                try {
+                                    val videoId = row.sourceRef
+                                    val videoUrl = "https://www.youtube.com/watch?v=$videoId"
+                                    val metadata = YoutubeVideoMetadata(
+                                        title = row.title ?: "", channel = "",
+                                        durationSecs = 0L, thumbnailUrl = "",
+                                    )
+                                    cacheManager.resolveSource(videoId, videoUrl, metadata)
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Failed to re-resolve YouTube video " +
+                                        "${row.sourceRef} on restore", e)
+                                    db.playbackStateDao().delete(trackId.name)
+                                    null
+                                }
                             }
                         }
                         else -> {
@@ -711,18 +727,8 @@ class MultiTrackService : MediaSessionService() {
         withContext(Dispatchers.IO) {
             val ref = source?.toPlaybackRef()
             if (ref == null) {
-                if (source is AudioSource.YoutubeStream) {
-                    // toPlaybackRef() always returns null for YoutubeStream (its CDN URL is
-                    // ephemeral), so without this guard every debounce/flush tick for the
-                    // entire duration of its background download would issue a DELETE for
-                    // no reason — there's nothing left to delete after the first tick clears
-                    // any stale row from a previously persisted source.
-                    if (trackId in youtubeStreamCleared) return@withContext
-                    youtubeStreamCleared += trackId
-                }
                 db.playbackStateDao().delete(trackId.name)
             } else {
-                youtubeStreamCleared -= trackId
                 val (sourceType, sourceRef) = ref
                 db.playbackStateDao().upsert(
                     PlaybackStateEntity(
