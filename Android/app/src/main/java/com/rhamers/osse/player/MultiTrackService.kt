@@ -3,6 +3,7 @@ package com.rhamers.osse.player
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -21,6 +22,7 @@ import android.util.Log
 import android.view.KeyEvent
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import androidx.media.app.NotificationCompat.MediaStyle
 import androidx.media3.common.Player
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
@@ -35,6 +37,7 @@ import com.rhamers.osse.model.toPlaybackRef
 import com.rhamers.osse.player.DefaultYoutubeCacheManager
 import com.rhamers.osse.youtube.NewPipeYoutubeExtractor
 import com.rhamers.osse.youtube.OkHttpNewPipeDownloader
+import com.rhamers.osse.youtube.YoutubeVideoMetadata
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -68,15 +71,6 @@ class MultiTrackService : MediaSessionService() {
     // Tracks which track IDs were playing when a transient focus loss occurred,
     // so we only resume those (not tracks the user had manually paused).
     private val pausedByFocusLoss = mutableSetOf<TrackId>()
-
-    // Tracks which track IDs have already had their stale playback_state row cleared for
-    // their current AudioSource.YoutubeStream source, so persistState() doesn't issue a
-    // redundant DELETE on every debounce/flush tick for the entire duration of a
-    // YoutubeStream's background download (there's nothing left to delete after the first
-    // tick). Cleared per-trackId whenever a persistable source is set, and reset entirely by
-    // clearTracksForTesting() so tests stay isolated.
-    private val youtubeStreamCleared: MutableSet<TrackId> =
-        java.util.Collections.synchronizedSet(mutableSetOf())
 
     // Holds the pending AudioFocusRequest on API 26+ so we can abandon it later.
     private var audioFocusRequestO: AudioFocusRequest? = null
@@ -203,17 +197,36 @@ class MultiTrackService : MediaSessionService() {
         }
 
     private fun handleMediaButtonKeyEvent(event: KeyEvent): Boolean {
-        if (event.keyCode != KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE &&
-            event.keyCode != KeyEvent.KEYCODE_HEADSETHOOK
-        ) {
-            return false
+        // Only react to the initial press; ignore key-up and long-press auto-repeat, but still
+        // claim the event so the default handling doesn't also act on it.
+        val isInitialPress = event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0
+        return when (event.keyCode) {
+            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_HEADSETHOOK -> {
+                if (isInitialPress) {
+                    lastMediaButtonEventAtMs = SystemClock.elapsedRealtime()
+                    onLogicalPlayPausePress()
+                }
+                true
+            }
+            // Dedicated skip-forward action (the notification's +30s button, and any remote
+            // that sends this keycode directly) -- always a plain 30s seek, independent of the
+            // play/pause double-press logic above.
+            //
+            // KEYCODE_MEDIA_NEXT is a second, independent route to the exact same action:
+            // confirmed on-device (logcat) that a real earbud's double-tap gesture is detected
+            // in the earbud's own firmware and reported to Android as a single
+            // KEYCODE_MEDIA_NEXT, never as two separate play/pause presses -- so for that
+            // hardware, onLogicalPlayPausePress's double-press window never gets a chance to
+            // run; there's no second press for it to see. Handling both keeps the play/pause
+            // double-press path intact for whatever hardware it originally targeted (e.g. a
+            // wired remote that genuinely sends two HEADSETHOOK clicks) while also covering
+            // earbuds that do their own gesture detection and emit NEXT instead.
+            KeyEvent.KEYCODE_MEDIA_FAST_FORWARD, KeyEvent.KEYCODE_MEDIA_NEXT -> {
+                if (isInitialPress) tracks[TrackId.PODCAST]?.forward()
+                true
+            }
+            else -> false
         }
-        // Only react to the initial press; ignore key-up and long-press auto-repeat.
-        if (event.action != KeyEvent.ACTION_DOWN || event.repeatCount != 0) return true
-
-        lastMediaButtonEventAtMs = SystemClock.elapsedRealtime()
-        onLogicalPlayPausePress()
-        return true
     }
 
     private fun onLogicalPlayPausePress() {
@@ -278,6 +291,19 @@ class MultiTrackService : MediaSessionService() {
         }
     }
 
+    // MediaSessionService's own default onTaskRemoved() (called when the user swipes this
+    // app's task away in Recents) decides whether to stopSelf() by checking
+    // getMediaNotificationManager().isStartedInForeground() -- but this service bypasses that
+    // manager entirely (see updateForegroundState() above), so that flag is always false
+    // regardless of whether anything is actually playing. Confirmed on-device: the default
+    // implementation stops this service on every single Recents swipe, killing live playback.
+    // Use the same anyTrackRequiresForeground() check updateForegroundState() already uses.
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        if (!anyTrackRequiresForeground(tracks.values)) {
+            stopSelf()
+        }
+    }
+
     private fun buildPlaybackNotification(): Notification {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
@@ -287,13 +313,48 @@ class MultiTrackService : MediaSessionService() {
             )
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
+        val track = activeNotificationTrack(tracks[TrackId.PODCAST], tracks[TrackId.MUSIC])
+        val isPlaying = track?.player?.playWhenReady == true
+        val playPauseAction = NotificationCompat.Action(
+            if (isPlaying) R.drawable.ic_media_pause else R.drawable.ic_media_play,
+            if (isPlaying) "Pause" else "Play",
+            mediaButtonPendingIntent(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE),
+        )
+        val forwardAction = NotificationCompat.Action(
+            R.drawable.ic_media_forward_30,
+            "+30s",
+            mediaButtonPendingIntent(KeyEvent.KEYCODE_MEDIA_FAST_FORWARD),
+        )
         return NotificationCompat.Builder(this, PLAYBACK_NOTIFICATION_CHANNEL_ID)
-            .setContentTitle(getString(R.string.app_name))
-            .setContentText("Playing")
+            .setContentTitle(track?.state?.value?.title ?: getString(R.string.app_name))
+            .setContentText(if (track == null) "Ready" else if (isPlaying) "Playing" else "Paused")
             .setSmallIcon(R.drawable.ic_notification)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
+            .addAction(playPauseAction)
+            .addAction(forwardAction)
+            .setStyle(
+                MediaStyle()
+                    .setMediaSession(mediaSession?.sessionCompatToken)
+                    .setShowActionsInCompactView(0, 1)
+            )
             .build()
+    }
+
+    // Delivers a synthetic media-button KeyEvent to this same service, exactly the shape
+    // MediaButtonReceiver forwards a real earbud press in (ACTION_MEDIA_BUTTON + EXTRA_KEY_EVENT,
+    // see onStartCommand's kdoc) -- used for the notification's own play/pause and skip-forward
+    // buttons so they go through the identical handleMediaButtonKeyEvent() path a real button
+    // press does, rather than duplicating its logic.
+    private fun mediaButtonPendingIntent(keyCode: Int): PendingIntent {
+        val intent = Intent(Intent.ACTION_MEDIA_BUTTON, null, this, MultiTrackService::class.java)
+            .putExtra(Intent.EXTRA_KEY_EVENT, KeyEvent(KeyEvent.ACTION_DOWN, keyCode))
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            PendingIntent.getForegroundService(this, keyCode, intent, flags)
+        } else {
+            PendingIntent.getService(this, keyCode, intent, flags)
+        }
     }
 
     private fun toggleAllActiveTracks() {
@@ -308,6 +369,10 @@ class MultiTrackService : MediaSessionService() {
     inner class LocalBinder : Binder() {
         val activeTrackIds: StateFlow<List<TrackId>> = _activeTrackIds.asStateFlow()
         val cacheManager: YoutubeCacheManager get() = this@MultiTrackService.cacheManager
+
+        fun setCacheManagerForTesting(manager: YoutubeCacheManager) {
+            this@MultiTrackService.cacheManager = manager
+        }
 
         fun getTrack(id: TrackId): TrackPlayer? = tracks[id]
 
@@ -377,7 +442,6 @@ class MultiTrackService : MediaSessionService() {
             tracks.clear()
             _activeTrackIds.value = emptyList()
             pausedByFocusLoss.clear()
-            youtubeStreamCleared.clear()
             // A pending double-press-window job (or the media-button-echo timestamp it's
             // paired with) is service-instance state, not per-track state, so it survives
             // the clears above. Left alone, a job scheduled by one test but not yet fired
@@ -387,6 +451,15 @@ class MultiTrackService : MediaSessionService() {
             pendingPressJob?.cancel()
             pendingPressJob = null
             lastMediaButtonEventAtMs = 0L
+            // A track left playing when a test ends calls startForeground() via the player
+            // listener in addTrack(); releasing the track above doesn't undo that. Left alone,
+            // isInForeground stays true into the next test (this binder/service is a singleton
+            // reused across the whole test class), which breaks any test that assumes a clean
+            // starting state.
+            if (isInForeground) {
+                stopForeground(Service.STOP_FOREGROUND_REMOVE)
+                isInForeground = false
+            }
         }
 
         fun simulateAudioFocusChange(focusChange: Int) {
@@ -419,6 +492,20 @@ class MultiTrackService : MediaSessionService() {
         fun restorePlaybackStateForTesting() = restorePlaybackState()
 
         fun sessionPlayerForTesting(): Player? = mediaSession?.player
+
+        fun simulateMediaButtonFastForward() {
+            handleMediaButtonKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD))
+        }
+
+        fun simulateMediaButtonNext() {
+            handleMediaButtonKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_NEXT))
+        }
+
+        fun simulateTaskRemoved() = onTaskRemoved(null)
+
+        fun buildNotificationForTesting(): Notification = buildPlaybackNotification()
+
+        fun isInForegroundForTesting(): Boolean = isInForeground
     }
 
     private val binder = LocalBinder()
@@ -464,6 +551,33 @@ class MultiTrackService : MediaSessionService() {
         startPeriodicPlaybackFlush()
     }
 
+    // MediaSessionService's own onStartCommand (invoked via super, below) parses an incoming
+    // ACTION_MEDIA_BUTTON intent and dispatches it to mediaButtonCallback -- that's the existing
+    // earbud-press path and is untouched here. This override exists only to satisfy a separate
+    // OS requirement: MediaButtonReceiver cold-starts a killed process via startForegroundService()
+    // for exactly this intent shape (confirmed: it only touches the component via setComponent(),
+    // the action stays ACTION_MEDIA_BUTTON), and API 31+ kills the process with
+    // ForegroundServiceDidNotStartInTimeException if startForeground() isn't called within a few
+    // seconds of that -- regardless of whether restorePlaybackState() found anything to resume.
+    // A normal launch (MainActivity's plain startService()) carries no such requirement and
+    // doesn't match this intent shape, so it's unaffected.
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val result = super.onStartCommand(intent, flags, startId)
+        if (intent?.action == Intent.ACTION_MEDIA_BUTTON && !isInForeground) {
+            startForeground(PLAYBACK_NOTIFICATION_ID, buildPlaybackNotification())
+            isInForeground = true
+            // The button press just dispatched above may only resolve into a play() after the
+            // double-press window elapses (onLogicalPlayPausePress's delayed toggle). Reconcile
+            // once that settles so a cold start that ultimately has nothing to play doesn't
+            // leave this notification stuck up forever.
+            serviceScope.launch {
+                delay(DOUBLE_PRESS_WINDOW_MS + 100)
+                updateForegroundState()
+            }
+        }
+        return result
+    }
+
     // Reloads each track's persisted source/title/position from `playback_state` so
     // playback survives process death. Never calls .play() — restored tracks stay paused
     // until a media-button press (or other explicit user action) resumes them via
@@ -477,7 +591,8 @@ class MultiTrackService : MediaSessionService() {
             val source: AudioSource,
             val title: String?,
             val positionMs: Long,
-            val speed: Float?,
+            val volume: Float,
+            val speed: Float,
         )
 
         val toRestore = try {
@@ -489,11 +604,32 @@ class MultiTrackService : MediaSessionService() {
                         PlaybackSourceType.LOCAL_FILE -> AudioSource.LocalFile(Uri.parse(row.sourceRef))
                         PlaybackSourceType.YOUTUBE -> {
                             val cached = db.youtubeCacheDao().getById(row.sourceRef)
-                            if (cached == null) {
-                                db.playbackStateDao().delete(trackId.name)
-                                null
-                            } else {
+                            if (cached != null) {
                                 AudioSource.YoutubeDownloaded(cached.localPath)
+                            } else {
+                                // Not cached yet -- most likely killed before the background
+                                // download finished. Re-resolve through the cache manager
+                                // instead of giving up: this gets a fresh CDN stream (and
+                                // kicks off a new background download) or finds the cache if
+                                // it finished in the meantime. Caught locally, per item, so
+                                // one dead video (network failure, video taken down, etc.)
+                                // can't propagate out to the one big try/catch around this
+                                // whole mapNotNull loop and wipe out restoring every OTHER
+                                // track too.
+                                try {
+                                    val videoId = row.sourceRef
+                                    val videoUrl = "https://www.youtube.com/watch?v=$videoId"
+                                    val metadata = YoutubeVideoMetadata(
+                                        title = row.title ?: "", channel = "",
+                                        durationSecs = 0L, thumbnailUrl = "",
+                                    )
+                                    cacheManager.resolveSource(videoId, videoUrl, metadata)
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Failed to re-resolve YouTube video " +
+                                        "${row.sourceRef} on restore", e)
+                                    db.playbackStateDao().delete(trackId.name)
+                                    null
+                                }
                             }
                         }
                         else -> {
@@ -505,15 +641,7 @@ class MultiTrackService : MediaSessionService() {
                         }
                     }
                     source ?: return@mapNotNull null
-                    val speed = if (trackId == TrackId.PODCAST && source is AudioSource.RssFeed) {
-                        db.episodeDao().getByEnclosureUrl(source.enclosureUrl)
-                            ?.podcastFeedUrl
-                            ?.let { db.podcastDao().getByUrl(it) }
-                            ?.defaultSpeed
-                    } else {
-                        null
-                    }
-                    Restored(trackId, source, row.title, row.positionMs, speed)
+                    Restored(trackId, source, row.title, row.positionMs, row.volume, row.speed)
                 }
             }
         } catch (e: Exception) {
@@ -530,7 +658,8 @@ class MultiTrackService : MediaSessionService() {
             // requested.
             track.setSource(r.source, r.title, prepare = false)
             track.seekTo(r.positionMs)
-            r.speed?.let { track.setSpeed(it) }
+            track.setVolume(r.volume)
+            track.setSpeed(r.speed)
         }
     }
 
@@ -557,7 +686,8 @@ class MultiTrackService : MediaSessionService() {
                     TrackId.entries.forEach { trackId ->
                         val state = tracks[trackId]?.state?.value ?: return@forEach
                         if (state.isPlaying) {
-                            persistState(db, trackId, state.source, state.title, state.positionMs)
+                            persistState(db, trackId, state.source, state.title, state.positionMs,
+                                state.volume, state.speed)
                         }
                     }
                 } catch (e: Exception) {
@@ -569,12 +699,19 @@ class MultiTrackService : MediaSessionService() {
 
     private fun startPlaybackStatePersistence(trackId: TrackId, player: TrackPlayer) {
         val db = OsseDatabase.get(this)
+        data class Snapshot(
+            val source: AudioSource?,
+            val title: String?,
+            val positionMs: Long,
+            val volume: Float,
+            val speed: Float,
+        )
         persistenceJobs[trackId] = serviceScope.launch {
             player.state
-                .map { Triple(it.source, it.title, it.positionMs) }
+                .map { Snapshot(it.source, it.title, it.positionMs, it.volume, it.speed) }
                 .distinctUntilChanged()
                 .debounce(2_000)
-                .collect { (source, title, positionMs) -> persistState(db, trackId, source, title, positionMs) }
+                .collect { persistState(db, trackId, it.source, it.title, it.positionMs, it.volume, it.speed) }
         }
     }
 
@@ -584,22 +721,14 @@ class MultiTrackService : MediaSessionService() {
         source: AudioSource?,
         title: String?,
         positionMs: Long,
+        volume: Float,
+        speed: Float,
     ) {
         withContext(Dispatchers.IO) {
             val ref = source?.toPlaybackRef()
             if (ref == null) {
-                if (source is AudioSource.YoutubeStream) {
-                    // toPlaybackRef() always returns null for YoutubeStream (its CDN URL is
-                    // ephemeral), so without this guard every debounce/flush tick for the
-                    // entire duration of its background download would issue a DELETE for
-                    // no reason — there's nothing left to delete after the first tick clears
-                    // any stale row from a previously persisted source.
-                    if (trackId in youtubeStreamCleared) return@withContext
-                    youtubeStreamCleared += trackId
-                }
                 db.playbackStateDao().delete(trackId.name)
             } else {
-                youtubeStreamCleared -= trackId
                 val (sourceType, sourceRef) = ref
                 db.playbackStateDao().upsert(
                     PlaybackStateEntity(
@@ -609,6 +738,8 @@ class MultiTrackService : MediaSessionService() {
                         title = title,
                         positionMs = positionMs,
                         updatedAt = System.currentTimeMillis(),
+                        volume = volume,
+                        speed = speed,
                     )
                 )
             }
@@ -691,4 +822,17 @@ internal fun anyTrackRequiresForeground(tracks: Collection<TrackPlayer>): Boolea
     tracks.any { track ->
         track.player.playWhenReady &&
             (track.player.playbackState == Player.STATE_READY || track.player.playbackState == Player.STATE_BUFFERING)
+    }
+
+// Picks whichever track the single playback notification should describe: whichever is
+// actually playing (podcast wins when both are, matching updateMediaSessionPlayer()'s own
+// precedence), falling back to whichever has a loaded source so a paused/restored-but-not-yet-
+// resumed track still shows its title instead of silently preferring an empty slot.
+internal fun activeNotificationTrack(podcast: TrackPlayer?, music: TrackPlayer?): TrackPlayer? =
+    when {
+        podcast?.player?.playWhenReady == true -> podcast
+        music?.player?.playWhenReady == true -> music
+        podcast?.state?.value?.source != null -> podcast
+        music?.state?.value?.source != null -> music
+        else -> null
     }

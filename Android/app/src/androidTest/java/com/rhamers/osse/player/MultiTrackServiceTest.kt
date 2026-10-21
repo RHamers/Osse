@@ -1,5 +1,6 @@
 package com.rhamers.osse.player
 
+import android.app.Notification
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -7,6 +8,7 @@ import android.content.ServiceConnection
 import android.media.AudioManager
 import android.net.Uri
 import android.os.IBinder
+import android.view.KeyEvent
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -28,6 +30,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -427,6 +430,194 @@ class MultiTrackServiceTest {
     }
 
     @Test
+    fun fastForwardKeyEventSeeksPodcastForward30SecondsWithoutTogglingPlayback() {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).apply {
+                setSource(AudioSource.RssFeed("https://example.com/ep.mp3"))
+                play()
+                seekTo(10_000L)
+            }
+            binder.addTrack(TrackId.MUSIC).apply {
+                setSource(AudioSource.RssFeed("https://example.com/music.mp3"))
+                play()
+            }
+            binder.simulateMediaButtonFastForward()
+        }
+        var podcastPosition = 0L
+        var podcastPlaying = false
+        var musicPlaying = false
+        instrumentation.runOnMainSync {
+            podcastPosition = binder.getTrack(TrackId.PODCAST)!!.state.value.positionMs
+            podcastPlaying = binder.getTrack(TrackId.PODCAST)!!.player.playWhenReady
+            musicPlaying = binder.getTrack(TrackId.MUSIC)!!.player.playWhenReady
+        }
+        assertEquals(40_000L, podcastPosition)
+        assertTrue("podcast should keep playing, only its position should change", podcastPlaying)
+        assertTrue("music should be unaffected by the notification's skip-forward action", musicPlaying)
+    }
+
+    @Test
+    fun mediaNextKeyEventSeeksPodcastForward30SecondsWithoutTogglingPlayback() {
+        // Some earbuds (confirmed on-device: a real Pixel-10a-paired set) detect a physical
+        // double-tap gesture in firmware and report it to Android as a single
+        // KEYCODE_MEDIA_NEXT, never as two separate play/pause presses -- so the double-press
+        // detection in onLogicalPlayPausePress never gets a chance to run for that hardware.
+        // This is a second, independent route to the same 30s skip, not a replacement.
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).apply {
+                setSource(AudioSource.RssFeed("https://example.com/ep.mp3"))
+                play()
+                seekTo(10_000L)
+            }
+            binder.addTrack(TrackId.MUSIC).apply {
+                setSource(AudioSource.RssFeed("https://example.com/music.mp3"))
+                play()
+            }
+            binder.simulateMediaButtonNext()
+        }
+        var podcastPosition = 0L
+        var podcastPlaying = false
+        var musicPlaying = false
+        instrumentation.runOnMainSync {
+            podcastPosition = binder.getTrack(TrackId.PODCAST)!!.state.value.positionMs
+            podcastPlaying = binder.getTrack(TrackId.PODCAST)!!.player.playWhenReady
+            musicPlaying = binder.getTrack(TrackId.MUSIC)!!.player.playWhenReady
+        }
+        assertEquals(40_000L, podcastPosition)
+        assertTrue("podcast should keep playing, only its position should change", podcastPlaying)
+        assertTrue("music should be unaffected by a KEYCODE_MEDIA_NEXT press", musicPlaying)
+    }
+
+    @Test
+    fun fastForwardKeyEventIsNoOpWhenNoPodcastTrackLoaded() {
+        // Guards against a crash if the notification's skip-forward action fires after
+        // clearTracksForTesting() wipes the tracks map (or, in production, before onCreate's
+        // addTrack(PODCAST) has run). runOnMainSync propagates any exception as a test failure.
+        instrumentation.runOnMainSync { binder.simulateMediaButtonFastForward() }
+    }
+
+    @Test
+    fun notificationShowsReadyWithAppNameWhenNoTrackIsActive() {
+        lateinit var notification: Notification
+        instrumentation.runOnMainSync { notification = binder.buildNotificationForTesting() }
+        assertEquals("Osse", notification.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
+        assertEquals("Ready", notification.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
+    }
+
+    @Test
+    fun notificationShowsActiveTrackTitleAndPlayingState() {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).apply {
+                setSource(AudioSource.RssFeed("https://example.com/ep.mp3"), "Episode 42")
+                play()
+            }
+        }
+        lateinit var notification: Notification
+        instrumentation.runOnMainSync { notification = binder.buildNotificationForTesting() }
+        assertEquals("Episode 42", notification.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
+        assertEquals("Playing", notification.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
+    }
+
+    @Test
+    fun notificationShowsPausedStateForALoadedButPausedTrack() {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST)
+                .setSource(AudioSource.RssFeed("https://example.com/ep.mp3"), "Episode 42")
+        }
+        lateinit var notification: Notification
+        instrumentation.runOnMainSync { notification = binder.buildNotificationForTesting() }
+        assertEquals("Paused", notification.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
+    }
+
+    @Test
+    fun notificationHasPlayPauseAndSkipForwardActions() {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).apply {
+                setSource(AudioSource.RssFeed("https://example.com/ep.mp3"), "Episode 42")
+                play()
+            }
+        }
+        lateinit var notification: Notification
+        instrumentation.runOnMainSync { notification = binder.buildNotificationForTesting() }
+        assertEquals(2, notification.actions.size)
+        assertEquals("Pause", notification.actions[0].title.toString())
+        assertEquals("+30s", notification.actions[1].title.toString())
+    }
+
+    @Test
+    fun clearTracksForTestingDropsAForegroundServiceLeftByAPlayingTrack() {
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).apply {
+                setSource(AudioSource.RssFeed("https://example.com/ep.mp3"))
+                play()
+            }
+        }
+        assertTrue(
+            "test setup: playing a track must enter foreground",
+            waitUntilInForeground(true, timeoutMs = 2_000),
+        )
+        instrumentation.runOnMainSync { binder.clearTracksForTesting() }
+        assertFalse(
+            "clearTracksForTesting must leave the service out of foreground, or it poisons " +
+                "every later test in this class that assumes a clean starting state",
+            binder.isInForegroundForTesting(),
+        )
+    }
+
+    @Test
+    fun onTaskRemovedDoesNotStopServiceWhilePlaybackIsOngoing() {
+        // Media3's own default onTaskRemoved() decides whether to stop the service by
+        // checking its internal MediaNotificationManager's isStartedInForeground() flag --
+        // but this service bypasses that manager entirely (see updateForegroundState()'s own
+        // kdoc), so that flag is always false regardless of what's actually playing. Without
+        // the override under test, this call would incorrectly stopSelf() the shared service
+        // instance this whole test class depends on, poisoning every later test -- so this is
+        // deliberately the one scenario in this class that must NOT tear the service down.
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST).apply {
+                setSource(AudioSource.RssFeed("https://example.com/ep.mp3"))
+                play()
+            }
+        }
+        assertTrue(
+            "test setup: playing a track must enter foreground",
+            waitUntilInForeground(true, timeoutMs = 2_000),
+        )
+        instrumentation.runOnMainSync { binder.simulateTaskRemoved() }
+        var podcastPlaying = false
+        instrumentation.runOnMainSync {
+            podcastPlaying = binder.getTrack(TrackId.PODCAST)?.player?.playWhenReady == true
+        }
+        assertTrue("service must not be stopped while a track is actively playing", podcastPlaying)
+    }
+
+    @Test
+    fun coldStartViaMediaButtonCallsStartForegroundEvenWithNothingToResume() {
+        // clearTracks() in @Before already wiped the tracks map and the DB, simulating a
+        // process wake with nothing restorable to play. A real MediaButtonReceiver cold
+        // start forwards the original ACTION_MEDIA_BUTTON intent (action untouched, just
+        // re-targeted) to this service via startForegroundService() -- see
+        // MultiTrackService.onStartCommand's kdoc for why that specifically requires a
+        // prompt startForeground() call regardless of whether anything ends up playing.
+        val ctx = ApplicationProvider.getApplicationContext<Context>()
+        val keyEvent = KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
+        val intent = Intent(Intent.ACTION_MEDIA_BUTTON)
+            .setClass(ctx, MultiTrackService::class.java)
+            .putExtra(Intent.EXTRA_KEY_EVENT, keyEvent)
+        ctx.startService(intent)
+
+        assertTrue(
+            "startForeground must be called within the OS timeout for a " +
+                "MediaButtonReceiver-style cold start",
+            waitUntilInForeground(true, timeoutMs = 2_000),
+        )
+        assertTrue(
+            "must reconcile back out of foreground once settling finds nothing playing",
+            waitUntilInForeground(false, timeoutMs = 3_000),
+        )
+    }
+
+    @Test
     fun playerCommandRequestPlayPauseTogglesTracksWhenNoRecentMediaButtonEvent() {
         instrumentation.runOnMainSync {
             binder.addTrack(TrackId.PODCAST).setSource(AudioSource.RssFeed("https://example.com/ep.mp3"))
@@ -603,6 +794,8 @@ class MultiTrackServiceTest {
             binder.addTrack(TrackId.PODCAST).apply {
                 setSource(AudioSource.RssFeed("https://example.com/ep.mp3"), "Episode 1")
                 seekTo(5_000L)
+                setVolume(0.4f)
+                setSpeed(1.75f)
             }
         }
         Thread.sleep(2_500) // > 2s debounce window
@@ -612,6 +805,8 @@ class MultiTrackServiceTest {
         assertEquals("https://example.com/ep.mp3", row.sourceRef)
         assertEquals("Episode 1", row.title)
         assertEquals(5_000L, row.positionMs)
+        assertEquals(0.4f, row.volume, 0.001f)
+        assertEquals(1.75f, row.speed, 0.001f)
     }
 
     @Test
@@ -640,17 +835,24 @@ class MultiTrackServiceTest {
     }
 
     @Test
-    fun youtubeStreamSourceIsNotPersisted() {
+    fun youtubeStreamSourcePersistsItsDurableVideoIdNotTheEphemeralCdnUrl() {
+        // A still-streaming (not yet cached) YouTube track now persists its durable videoId,
+        // not its ephemeral CDN URL -- see AudioSource.toPlaybackRef()'s kdoc. This is what
+        // lets restorePlaybackState() re-resolve a fresh stream after a kill that happens
+        // before the background download finishes, instead of losing the track outright.
         val db = OsseDatabase.get(ApplicationProvider.getApplicationContext())
         instrumentation.runOnMainSync {
             binder.addTrack(TrackId.MUSIC).apply {
-                setSource(AudioSource.YoutubeStream("https://youtube.com/watch?v=abc"))
+                setSource(AudioSource.YoutubeStream("https://youtube.com/watch?v=abc", videoId = "abc"))
                 seekTo(3_000L)
             }
         }
         Thread.sleep(2_500)
         val row = runBlocking { db.playbackStateDao().getByTrackId("MUSIC") }
-        assertNull("an ephemeral YouTube CDN stream URL must never be persisted", row)
+        assertNotNull("expected a persisted row keyed by the video's durable id", row)
+        assertEquals("YOUTUBE", row!!.sourceType)
+        assertEquals("abc", row.sourceRef)
+        assertEquals(3_000L, row.positionMs)
     }
 
     // Regression test for the plan-level gap flagged in review: TrackPlayer emits a fresh
@@ -727,7 +929,11 @@ class MultiTrackServiceTest {
     }
 
     @Test
-    fun restoringPodcastTrackAppliesThePodcastsDefaultSpeed() {
+    fun restoringPlaybackStateReloadsVolumeAndSpeedForBothTracks() {
+        // The podcast's own configured defaultSpeed (1.5f here) must NOT win over a live,
+        // persisted value from the actual last session (0.4f/1.75f) -- restoring after a kill
+        // should bring back exactly what the user had set, not reset to the podcast's default.
+        // The per-podcast default still applies elsewhere (starting a NEW episode), just not here.
         val db = OsseDatabase.get(ApplicationProvider.getApplicationContext())
         runBlocking {
             db.podcastDao().upsert(
@@ -743,15 +949,28 @@ class MultiTrackServiceTest {
                 PlaybackStateEntity(
                     trackId = "PODCAST", sourceType = "RSS_FEED",
                     sourceRef = "https://example.com/ep1.mp3", title = "Episode 1",
-                    positionMs = 0L, updatedAt = 0L,
+                    positionMs = 0L, updatedAt = 0L, volume = 0.4f, speed = 1.75f,
+                )
+            )
+            db.playbackStateDao().upsert(
+                PlaybackStateEntity(
+                    trackId = "MUSIC", sourceType = "RSS_FEED",
+                    sourceRef = "https://example.com/music.mp3", title = "Music",
+                    positionMs = 0L, updatedAt = 0L, volume = 0.6f, speed = 1.25f,
                 )
             )
         }
         instrumentation.runOnMainSync {
             binder.addTrack(TrackId.PODCAST)
+            binder.addTrack(TrackId.MUSIC)
             binder.restorePlaybackStateForTesting()
         }
-        assertEquals(1.5f, binder.getTrack(TrackId.PODCAST)!!.state.value.speed, 0.001f)
+        val podcastState = binder.getTrack(TrackId.PODCAST)!!.state.value
+        val musicState = binder.getTrack(TrackId.MUSIC)!!.state.value
+        assertEquals(0.4f, podcastState.volume, 0.001f)
+        assertEquals(1.75f, podcastState.speed, 0.001f)
+        assertEquals(0.6f, musicState.volume, 0.001f)
+        assertEquals(1.25f, musicState.speed, 0.001f)
     }
 
     // Fix 3 (final review): of the three AudioSource branches restorePlaybackState() handles,
@@ -851,23 +1070,88 @@ class MultiTrackServiceTest {
     }
 
     @Test
-    fun restoringYoutubeTrackNotInCacheLeavesItSourcelessAndClearsStaleRow() {
+    fun restoringYoutubeTrackNotInCacheReResolvesThroughCacheManager() {
+        // Covers the bug this guards against: a kill before the background download finishes
+        // used to leave this track sourceless forever, since the ephemeral CDN URL was never
+        // persisted. The durable videoId now is, so restore can get a fresh (or cached) source
+        // back through the cache manager instead of giving up.
         val db = OsseDatabase.get(ApplicationProvider.getApplicationContext())
         runBlocking {
             db.playbackStateDao().upsert(
                 PlaybackStateEntity(
                     trackId = "MUSIC", sourceType = "YOUTUBE",
-                    sourceRef = "missingVideoId", title = "Gone", positionMs = 0L, updatedAt = 0L,
+                    sourceRef = "freshVideoId", title = "Still Streaming", positionMs = 5_000L, updatedAt = 0L,
+                )
+            )
+        }
+        val freshSource = AudioSource.YoutubeStream("https://fresh.example.com/audio", videoId = "freshVideoId")
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.MUSIC)
+            binder.setCacheManagerForTesting(FakeYoutubeCacheManager(resolveResult = Result.success(freshSource)))
+            binder.restorePlaybackStateForTesting()
+        }
+        val state = binder.getTrack(TrackId.MUSIC)!!.state.value
+        assertEquals(freshSource, state.source)
+        assertEquals(5_000L, state.positionMs)
+    }
+
+    @Test
+    fun restoringYoutubeTrackLeavesItSourcelessAndClearsStaleRowWhenReResolveFails() {
+        val db = OsseDatabase.get(ApplicationProvider.getApplicationContext())
+        runBlocking {
+            db.playbackStateDao().upsert(
+                PlaybackStateEntity(
+                    trackId = "MUSIC", sourceType = "YOUTUBE",
+                    sourceRef = "deadVideoId", title = "Gone", positionMs = 0L, updatedAt = 0L,
                 )
             )
         }
         instrumentation.runOnMainSync {
             binder.addTrack(TrackId.MUSIC)
+            binder.setCacheManagerForTesting(
+                FakeYoutubeCacheManager(resolveResult = Result.failure(IOException("video gone")))
+            )
             binder.restorePlaybackStateForTesting()
         }
         assertNull(binder.getTrack(TrackId.MUSIC)!!.state.value.source)
         val row = runBlocking { db.playbackStateDao().getByTrackId("MUSIC") }
-        assertNull("stale playback_state row must be cleared when the cache entry is gone", row)
+        assertNull("stale playback_state row must be cleared when re-resolving fails", row)
+    }
+
+    @Test
+    fun restoringPlaybackStateContinuesOtherTracksWhenOneYoutubeReResolveFails() {
+        // Regression guard: restorePlaybackState()'s mapNotNull loop now makes a live
+        // re-resolve call per YouTube entry. Without a per-item try/catch, one throwing
+        // (e.g. a dead video) would propagate to the single outer try/catch around the whole
+        // loop and silently drop every OTHER track's restore too.
+        val db = OsseDatabase.get(ApplicationProvider.getApplicationContext())
+        runBlocking {
+            db.playbackStateDao().upsert(
+                PlaybackStateEntity(
+                    trackId = "PODCAST", sourceType = "RSS_FEED",
+                    sourceRef = "https://example.com/ep.mp3", title = "Episode", positionMs = 1_000L, updatedAt = 0L,
+                )
+            )
+            db.playbackStateDao().upsert(
+                PlaybackStateEntity(
+                    trackId = "MUSIC", sourceType = "YOUTUBE",
+                    sourceRef = "deadVideoId", title = "Gone", positionMs = 0L, updatedAt = 0L,
+                )
+            )
+        }
+        instrumentation.runOnMainSync {
+            binder.addTrack(TrackId.PODCAST)
+            binder.addTrack(TrackId.MUSIC)
+            binder.setCacheManagerForTesting(
+                FakeYoutubeCacheManager(resolveResult = Result.failure(IOException("video gone")))
+            )
+            binder.restorePlaybackStateForTesting()
+        }
+        assertEquals(
+            AudioSource.RssFeed("https://example.com/ep.mp3"),
+            binder.getTrack(TrackId.PODCAST)!!.state.value.source,
+        )
+        assertNull(binder.getTrack(TrackId.MUSIC)!!.state.value.source)
     }
 
     private fun waitUntilPlaying(id: TrackId, timeoutMs: Long): Boolean {
@@ -905,6 +1189,17 @@ class MultiTrackServiceTest {
             }
             if (!playWhenReady) return true
             Thread.sleep(50)
+        }
+        return false
+    }
+
+    private fun waitUntilInForeground(expected: Boolean, timeoutMs: Long): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            var inForeground = false
+            instrumentation.runOnMainSync { inForeground = binder.isInForegroundForTesting() }
+            if (inForeground == expected) return true
+            Thread.sleep(100)
         }
         return false
     }

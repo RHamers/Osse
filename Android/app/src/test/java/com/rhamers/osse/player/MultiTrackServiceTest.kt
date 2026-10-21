@@ -6,6 +6,8 @@ import com.rhamers.osse.model.AudioSource
 import com.rhamers.osse.model.TrackId
 import org.junit.After
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -74,5 +76,35 @@ class MultiTrackServiceTest {
         shadowOf(Looper.getMainLooper()).idle()
 
         assertFalse(anyTrackRequiresForeground(listOf(podcast, music)))
+    }
+
+    @Test
+    fun `no tracks loaded has no active notification track`() {
+        assertNull(activeNotificationTrack(null, null))
+    }
+
+    @Test
+    fun `playing podcast is preferred over idle music for the notification`() {
+        podcast.setSource(AudioSource.RssFeed("https://example.com/ep.mp3"))
+        podcast.play()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertSame(podcast, activeNotificationTrack(podcast, music))
+    }
+
+    @Test
+    fun `playing music is used for the notification when podcast is idle`() {
+        music.setSource(AudioSource.RssFeed("https://example.com/music.mp3"))
+        music.play()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertSame(music, activeNotificationTrack(podcast, music))
+    }
+
+    @Test
+    fun `paused podcast with a loaded source still wins over idle music for the notification`() {
+        podcast.setSource(AudioSource.RssFeed("https://example.com/ep.mp3"))
+
+        assertSame(podcast, activeNotificationTrack(podcast, music))
     }
 }
